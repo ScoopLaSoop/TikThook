@@ -62,6 +62,23 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
+async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    user = update.effective_user
+    lines = [
+        f"*Ton user ID :* `{user.id}`",
+        f"*Chat ID (ce chat) :* `{chat.id}`",
+        f"*Type de chat :* {chat.type}",
+    ]
+    if chat.title:
+        lines.append(f"*Nom du groupe :* {chat.title}")
+    lines.append(
+        "\n➡️ Pour configurer le groupe principal, copie le *Chat ID* "
+        "et ajoute-le comme variable `GROUP_CHAT_ID` sur Railway."
+    )
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
 # ---------------------------------------------------------------------------
 # Notification sender (called by the monitor loop)
 # ---------------------------------------------------------------------------
@@ -112,4 +129,5 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("id", cmd_id))
     return app
