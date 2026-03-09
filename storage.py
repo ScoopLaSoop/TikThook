@@ -111,6 +111,44 @@ async def remove_subscriber(chat_id: int) -> bool:
 # TikThook Channels — Telegram groups
 # ---------------------------------------------------------------------------
 
+async def add_telegram_channel(chat_id: int, thread_id: int | None, description: str = "") -> bool:
+    """Register a Telegram group (or topic) in TikThook Channels. Returns True if added, False if already present."""
+    try:
+        formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id})'
+        if thread_id:
+            formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}, {{THREAD_ID}}={thread_id})'
+        existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
+        if existing:
+            return False
+        data: dict = {"TYPE": "TELEGRAM", "CHAT_ID": chat_id}
+        if thread_id:
+            data["THREAD_ID"] = thread_id
+        if description:
+            data["DESCRIPTION"] = description
+        _table("TikThook Channels").create(data)
+        return True
+    except Exception as e:
+        logger.error("add_telegram_channel failed: %s", e)
+        return False
+
+
+async def remove_telegram_channel(chat_id: int, thread_id: int | None) -> bool:
+    """Remove a Telegram group (or topic) from TikThook Channels."""
+    try:
+        formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id})'
+        if thread_id:
+            formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}, {{THREAD_ID}}={thread_id})'
+        existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
+        if not existing:
+            return False
+        for r in existing:
+            _table("TikThook Channels").delete(r["id"])
+        return True
+    except Exception as e:
+        logger.error("remove_telegram_channel failed: %s", e)
+        return False
+
+
 async def get_telegram_channels() -> list[tuple[int, int | None]]:
     """
     Returns list of (chat_id, thread_id) for all TELEGRAM entries.

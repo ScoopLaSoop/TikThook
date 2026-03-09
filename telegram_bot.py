@@ -2,10 +2,12 @@
 Telegram bot handlers and notification sender.
 
 Commands:
-    /start  — subscribe to live notifications
-    /stop   — unsubscribe
-    /status — list accounts currently live
-    /id     — get current chat ID and thread ID (for Airtable config)
+    /start      — subscribe to live notifications
+    /stop       — unsubscribe
+    /status     — list accounts currently live
+    /id         — get current chat ID and thread ID
+    /addgroup   — register this group/topic to receive notifications (admin only)
+    /removegroup — unregister this group/topic (admin only)
 """
 
 import logging
@@ -89,6 +91,74 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Group registration commands (admin only)
+# ---------------------------------------------------------------------------
+
+async def _is_admin(update: Update, context) -> bool:
+    chat = update.effective_chat
+    user = update.effective_user
+    if chat.type == "private":
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        return member.status in ("administrator", "creator")
+    except Exception:
+        return False
+
+
+async def cmd_addgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _is_admin(update, context):
+        await update.message.reply_text("❌ Seuls les admins peuvent enregistrer ce groupe.")
+        return
+
+    chat = update.effective_chat
+    msg = update.message
+    thread_id = msg.message_thread_id if msg else None
+
+    if chat.type == "private":
+        await update.message.reply_text(
+            "Cette commande doit être utilisée dans un groupe, pas en privé."
+        )
+        return
+
+    description = chat.title or ""
+    added = await storage.add_telegram_channel(chat.id, thread_id, description)
+
+    if added:
+        topic_info = f" (topic `{thread_id}`)" if thread_id else ""
+        await update.message.reply_text(
+            f"✅ Ce groupe{topic_info} recevra désormais les notifications TikTok Live !\n"
+            f"Utilise /removegroup pour désactiver.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    else:
+        await update.message.reply_text(
+            "Ce groupe est déjà enregistré. Utilise /removegroup pour le retirer."
+        )
+
+
+async def cmd_removegroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _is_admin(update, context):
+        await update.message.reply_text("❌ Seuls les admins peuvent retirer ce groupe.")
+        return
+
+    chat = update.effective_chat
+    msg = update.message
+    thread_id = msg.message_thread_id if msg else None
+
+    removed = await storage.remove_telegram_channel(chat.id, thread_id)
+
+    if removed:
+        await update.message.reply_text(
+            "⚫ Ce groupe ne recevra plus les notifications TikTok Live."
+        )
+    else:
+        await update.message.reply_text(
+            "Ce groupe n'était pas enregistré. Utilise /addgroup pour l'ajouter."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Notification sender (called by the monitor loop)
 # ---------------------------------------------------------------------------
 
@@ -167,4 +237,6 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("id", cmd_id))
+    app.add_handler(CommandHandler("addgroup", cmd_addgroup))
+    app.add_handler(CommandHandler("removegroup", cmd_removegroup))
     return app
