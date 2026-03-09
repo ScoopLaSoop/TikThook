@@ -7,6 +7,7 @@ Slash commands:
   /tikthook setlive username — one account → this channel (per-account)
   /tikthook removelive username — remove per-account routing
   /tikthook status           — see which TikTok accounts are currently live
+  /tikthook help             — show all commands and best practices
 """
 
 import logging
@@ -121,6 +122,39 @@ async def cmd_status(interaction: discord.Interaction) -> None:
     else:
         text = "Aucun compte n'est actuellement en live."
     await interaction.response.send_message(text)
+
+
+DISCORD_HELP_TEXT = (
+    "🤖 **TikThook — Notifications TikTok Live**\n"
+    "\n"
+    "📡 **Toutes les notifications → ce channel**\n"
+    "• `/tikthook set` — Ce channel reçoit les notifs de **tous** les comptes\n"
+    "• `/tikthook remove` — Désactiver les notifs globales\n"
+    "\n"
+    "🎯 **Notifications → un seul compte**\n"
+    "• `/tikthook setlive username` — Ce channel reçoit uniquement les notifs de ce compte\n"
+    "  *ex : /tikthook setlive roxane_mn*\n"
+    "• `/tikthook removelive username` — Supprimer ce routage\n"
+    "  *ex : /tikthook removelive roxane_mn*\n"
+    "\n"
+    "🔧 **Utilitaire**\n"
+    "• `/tikthook status` — Voir les comptes actuellement en live\n"
+    "• `/tikthook help` — Afficher ce message\n"
+    "\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━\n"
+    "✅ **Bonnes pratiques Discord**\n"
+    "\n"
+    "• Invite le bot avec les permissions **Envoyer des messages** et **Lire les messages**\n"
+    "• Les commandes `/set`, `/remove`, `/setlive`, `/removelive` nécessitent la permission **Gérer les channels**\n"
+    "• Tu peux avoir un channel global **et** des channels par compte en même temps\n"
+    "• Pour plusieurs comptes dans le même channel : fais `/tikthook setlive` une fois par compte\n"
+    "• `/tikthook set` et `/tikthook setlive` peuvent pointer vers des channels différents"
+)
+
+
+@group.command(name="help", description="Aide et liste des commandes TikThook")
+async def cmd_help(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(DISCORD_HELP_TEXT, ephemeral=False)
 
 
 @group.error
