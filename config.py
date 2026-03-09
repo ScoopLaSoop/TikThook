@@ -9,28 +9,22 @@ POLL_INTERVAL = 60  # seconds between each polling cycle
 # Each entry: (display_name, tiktok_username)
 # Multiple accounts per person — all are monitored independently.
 ACCOUNTS: list[tuple[str, str]] = [
-    # Roxane
-    ("Roxane", "iambby_roxane"),
+    # Roxane (iambby_roxane retiré — compte invalide selon TikTok)
     ("Roxane", "roxane_mn"),
     ("Roxane", "roxane_mneee"),
-    # Elisa / Cleo
+    # Elisa (drd_elisa0 retiré — compte invalide selon TikTok)
     ("Elisa", "lolaxkitty"),
-    ("Elisa", "drd_elisa0"),
     ("Elisa", "elisa.durand03"),
-    ("Cleo", "Cleo_mrti"),
-    ("Cleo", "cleo.mrti"),
+    # Cleo (Cleo_mrti et cleo.mrti retirés — comptes invalides selon TikTok)
     ("Cleo", "cleomrti01"),
     ("Cleo", "cleomrti02"),
     # Mel
     ("Mel", "mel_reels_x"),
     ("Mel", "myintimeside2.0"),
     ("Mel", "mel_bassin"),
-    # Laly
-    ("Laly", "Laly_chauvt"),
-    ("Laly", "laly.chauvt"),
+    # Laly (Laly_chauvt et laly.chauvt retirés — comptes invalides selon TikTok)
     ("Laly", "chauvette7mc"),
-    # Kath
-    ("Kath", "Kathklf"),
+    # Kath (Kathklf retiré — compte invalide selon TikTok)
     ("Kath", "kathelyn.klfoff"),
     # Iggpvv2katt
     ("Iggpvv2katt", "iggpvv2katt"),

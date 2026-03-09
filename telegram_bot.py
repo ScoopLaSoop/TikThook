@@ -90,6 +90,9 @@ async def send_live_notification(
     is_live: bool,
 ) -> None:
     """Broadcast a live-start or live-end message to the group and all subscribers."""
+    status = "EN LIVE" if is_live else "FIN DE LIVE"
+    logger.info("🔔 Transition détectée : @%s — %s", username, status)
+
     if is_live:
         text = f"🔴 *{display_name}* (@{username}) est en live sur TikTok !"
     else:
@@ -105,6 +108,15 @@ async def send_live_notification(
         if str(chat_id) != str(GROUP_CHAT_ID):
             targets.append(chat_id)
 
+    if not targets:
+        logger.warning(
+            "⚠️  Notification pour @%s ignorée : aucun destinataire "
+            "(GROUP_CHAT_ID vide et 0 abonnés). Fais /start dans le bot ou définis GROUP_CHAT_ID.",
+            username,
+        )
+        return
+
+    logger.info("📨 Envoi à %d destinataire(s)...", len(targets))
     for target in targets:
         try:
             await app.bot.send_message(
@@ -112,8 +124,9 @@ async def send_live_notification(
                 text=text,
                 parse_mode=ParseMode.MARKDOWN,
             )
+            logger.info("  ✅ Envoyé à %s", target)
         except Exception as exc:
-            logger.warning("Failed to send to %s: %s", target, exc)
+            logger.warning("  ❌ Échec envoi à %s: %s", target, exc)
 
 
 # ---------------------------------------------------------------------------
