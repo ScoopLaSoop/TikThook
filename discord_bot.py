@@ -35,6 +35,21 @@ class TikThookBot(commands.Bot):
 
     async def on_ready(self) -> None:
         logger.info("Discord bot ready — logged in as %s (id=%s)", self.user, self.user.id)
+        for guild in self.guilds:
+            try:
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                logger.info("Commands synced instantly to guild: %s (%s)", guild.name, guild.id)
+            except Exception as e:
+                logger.warning("Failed to sync to guild %s: %s", guild.name, e)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        try:
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            logger.info("Joined new guild — commands synced instantly: %s (%s)", guild.name, guild.id)
+        except Exception as e:
+            logger.warning("Failed to sync to new guild %s: %s", guild.name, e)
 
 
 bot = TikThookBot()
