@@ -51,7 +51,7 @@ async def polling_loop(notify: NotifyCallback) -> None:
     while True:
         accounts = await storage.get_accounts()
         if not accounts:
-            logger.warning("No accounts found in Airtable TIKTOK table — retrying in %ds", POLL_INTERVAL)
+            logger.warning("No accounts found in Airtable TikThook table — retrying in %ds", POLL_INTERVAL)
             await asyncio.sleep(POLL_INTERVAL)
             continue
 

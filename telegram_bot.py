@@ -101,8 +101,8 @@ async def send_live_notification(
     seen: set = set()
     targets: list[int] = []
 
-    # 1. All Telegram groups (global list from GROUPES_TELEGRAM + TikThook Groups table)
-    for chat_id in await storage.get_all_telegram_groups():
+    # 1. Telegram groups (table TikThook Groups)
+    for chat_id in await storage.get_group_chat_ids():
         if chat_id not in seen:
             seen.add(chat_id)
             targets.append(chat_id)
@@ -116,7 +116,7 @@ async def send_live_notification(
     if not targets:
         logger.warning(
             "⚠️  Notification @%s ignorée : 0 destinataires. "
-            "Ajoute des groupes dans GROUPES_TELEGRAM ou 'TikThook Groups', ou fais /start.",
+            "Ajoute un groupe dans 'TikThook Groups' (Airtable) ou fais /start dans le bot.",
             username,
         )
         return

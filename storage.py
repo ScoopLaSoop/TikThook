@@ -2,11 +2,10 @@
 Persistent storage via Airtable (base: ALLURE AGENCY).
 
 Tables used:
-  TIKTOK                     — COMPTE (username), NOM (display name),
-                               GROUPES_TELEGRAM (comma-separated group IDs, optional)
-  TikThook Subscribers       — CHAT_ID (bigint)
-  TikThook Groups            — CHAT_ID (bigint), DESCRIPTION (text)  [global fallback]
-  TikThook Discord Channels  — GUILD_ID (bigint), CHANNEL_ID (bigint), GUILD_NAME (text)
+  TikThook                  — COMPTE (TikTok username), NOM (display name)
+  TikThook Subscribers      — CHAT_ID (Telegram user/chat ID, via /start)
+  TikThook Groups           — CHAT_ID (Telegram group ID to notify)
+  TikThook Discord Channels — GUILD_ID, CHANNEL_ID, GUILD_NAME
 """
 
 import logging
@@ -17,34 +16,23 @@ logger = logging.getLogger(__name__)
 
 _BASE_ID = "appxPSRdBvtivWojx"
 
+
 def _api() -> Api:
     return Api(os.environ["AIRTABLE_TOKEN"])
+
 
 def _table(name: str):
     return _api().table(_BASE_ID, name)
 
 
 # ---------------------------------------------------------------------------
-# TikTok accounts (loaded from Airtable at each poll cycle)
+# TikTok accounts
 # ---------------------------------------------------------------------------
 
-def _parse_group_ids(raw: str) -> list[int]:
-    """Parse a comma/newline-separated string of Telegram group IDs into a list of ints."""
-    ids = []
-    for part in raw.replace("\n", ",").split(","):
-        part = part.strip()
-        if part:
-            try:
-                ids.append(int(part))
-            except ValueError:
-                pass
-    return ids
-
-
 async def get_accounts() -> list[tuple[str, str]]:
-    """Returns list of (display_name, username) from the TIKTOK table."""
+    """Returns list of (display_name, username) from the TikThook table."""
     try:
-        records = _table("TIKTOK").all(fields=["COMPTE", "NOM"])
+        records = _table("TikThook").all(fields=["COMPTE", "NOM"])
         accounts = []
         for r in records:
             username = r["fields"].get("COMPTE", "").strip()
@@ -57,41 +45,8 @@ async def get_accounts() -> list[tuple[str, str]]:
         return []
 
 
-async def get_all_telegram_groups() -> list[int]:
-    """
-    Returns all unique Telegram group IDs from:
-    - GROUPES_TELEGRAM field across ALL rows of the TIKTOK table
-    - TikThook Groups table (global fallback)
-    Every notification goes to ALL of these groups, regardless of which account triggered it.
-    """
-    seen: set[int] = set()
-    result: list[int] = []
-
-    try:
-        records = _table("TIKTOK").all(fields=["GROUPES_TELEGRAM"])
-        for r in records:
-            raw = r["fields"].get("GROUPES_TELEGRAM", "")
-            if raw:
-                for gid in _parse_group_ids(raw):
-                    if gid not in seen:
-                        seen.add(gid)
-                        result.append(gid)
-    except Exception as e:
-        logger.error("get_all_telegram_groups (TIKTOK) failed: %s", e)
-
-    try:
-        for gid in await get_group_chat_ids():
-            if gid not in seen:
-                seen.add(gid)
-                result.append(gid)
-    except Exception as e:
-        logger.error("get_all_telegram_groups (TikThook Groups) failed: %s", e)
-
-    return result
-
-
 # ---------------------------------------------------------------------------
-# Subscribers (individual /start users)
+# Telegram — individual subscribers (/start users)
 # ---------------------------------------------------------------------------
 
 async def get_subscribers() -> list[int]:
@@ -104,6 +59,7 @@ async def get_subscribers() -> list[int]:
 
 
 async def add_subscriber(chat_id: int) -> bool:
+    """Returns True if added, False if already present."""
     try:
         existing = _table("TikThook Subscribers").all(
             formula=f"{{CHAT_ID}}={chat_id}", fields=["CHAT_ID"]
@@ -118,6 +74,7 @@ async def add_subscriber(chat_id: int) -> bool:
 
 
 async def remove_subscriber(chat_id: int) -> bool:
+    """Returns True if removed, False if not found."""
     try:
         existing = _table("TikThook Subscribers").all(
             formula=f"{{CHAT_ID}}={chat_id}", fields=["CHAT_ID"]
@@ -133,7 +90,7 @@ async def remove_subscriber(chat_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Group chat IDs
+# Telegram — group chat IDs
 # ---------------------------------------------------------------------------
 
 async def get_group_chat_ids() -> list[int]:
@@ -167,7 +124,7 @@ async def get_discord_channels() -> list[tuple[int, int]]:
 
 
 async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -> bool:
-    """Upsert: one entry per guild (replace if already exists)."""
+    """Upsert: one entry per guild."""
     try:
         existing = _table("TikThook Discord Channels").all(
             formula=f"{{GUILD_ID}}={guild_id}", fields=["GUILD_ID"]
@@ -199,8 +156,8 @@ async def remove_discord_channel(guild_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Live state (in-memory only — resets on restart, which is fine:
-# the first poll after restart will re-detect and re-notify if still live)
+# Live state (in-memory — resets on restart, intentional:
+# first poll after restart re-detects and re-notifies if still live)
 # ---------------------------------------------------------------------------
 
 _live_state: dict[str, bool] = {}
