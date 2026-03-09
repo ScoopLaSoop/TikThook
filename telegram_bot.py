@@ -5,6 +5,7 @@ Commands:
     /start  — subscribe to live notifications
     /stop   — unsubscribe
     /status — list accounts currently live
+    /id     — get current chat ID (to add to TikThook Groups in Airtable)
 """
 
 import logging
@@ -13,7 +14,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.constants import ParseMode
 
-from config import TELEGRAM_TOKEN, GROUP_CHAT_ID
+from config import TELEGRAM_TOKEN
 import storage
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,8 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if chat.title:
         lines.append(f"*Nom du groupe :* {chat.title}")
     lines.append(
-        "\n➡️ Pour configurer le groupe principal, copie le *Chat ID* "
-        "et ajoute-le comme variable `GROUP_CHAT_ID` sur Railway."
+        "\n➡️ Pour notifier ce groupe, ajoute ce *Chat ID* dans la table "
+        "*TikThook Groups* de ta base Airtable (champ CHAT\\_ID)."
     )
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
@@ -89,7 +90,6 @@ async def send_live_notification(
     username: str,
     is_live: bool,
 ) -> None:
-    """Broadcast a live-start or live-end message to the group and all subscribers."""
     status = "EN LIVE" if is_live else "FIN DE LIVE"
     logger.info("🔔 Transition détectée : @%s — %s", username, status)
 
@@ -98,20 +98,24 @@ async def send_live_notification(
     else:
         text = f"⚫ *{display_name}* (@{username}) a terminé son live."
 
-    targets: list[int | str] = []
+    # Collect all targets: groups from Airtable + individual subscribers
+    seen: set = set()
+    targets: list[int] = []
 
-    if GROUP_CHAT_ID:
-        targets.append(GROUP_CHAT_ID)
+    for chat_id in await storage.get_group_chat_ids():
+        if chat_id not in seen:
+            seen.add(chat_id)
+            targets.append(chat_id)
 
-    subscribers = await storage.get_subscribers()
-    for chat_id in subscribers:
-        if str(chat_id) != str(GROUP_CHAT_ID):
+    for chat_id in await storage.get_subscribers():
+        if chat_id not in seen:
+            seen.add(chat_id)
             targets.append(chat_id)
 
     if not targets:
         logger.warning(
-            "⚠️  Notification pour @%s ignorée : aucun destinataire "
-            "(GROUP_CHAT_ID vide et 0 abonnés). Fais /start dans le bot ou définis GROUP_CHAT_ID.",
+            "⚠️  Notification @%s ignorée : 0 destinataires. "
+            "Ajoute un groupe dans 'TikThook Groups' ou fais /start dans le bot.",
             username,
         )
         return

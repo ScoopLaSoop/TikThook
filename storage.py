@@ -1,50 +1,68 @@
 """
-Persistent storage via Supabase — survives redeploys.
+Persistent storage via Airtable (base: ALLURE AGENCY).
 
-Tables (created once in Supabase):
-  tikthook_subscribers  (chat_id BIGINT PRIMARY KEY, added_at TIMESTAMPTZ)
-  tikthook_live_state   (username TEXT PRIMARY KEY, is_live BOOLEAN, updated_at TIMESTAMPTZ)
+Tables used:
+  TIKTOK              — COMPTE (username), NOM (display name)
+  TikThook Subscribers — CHAT_ID (bigint)
+  TikThook Groups     — CHAT_ID (bigint), DESCRIPTION (text)
 """
 
 import logging
 import os
-from supabase import create_client, Client
+from pyairtable import Api
 
 logger = logging.getLogger(__name__)
 
-_SUPABASE_URL = os.environ["SUPABASE_URL"]
-_SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+_BASE_ID = "appxPSRdBvtivWojx"
 
-def _client() -> Client:
-    return create_client(_SUPABASE_URL, _SUPABASE_KEY)
+def _api() -> Api:
+    return Api(os.environ["AIRTABLE_TOKEN"])
+
+def _table(name: str):
+    return _api().table(_BASE_ID, name)
 
 
 # ---------------------------------------------------------------------------
-# Subscribers
+# TikTok accounts (loaded from Airtable at each poll cycle)
+# ---------------------------------------------------------------------------
+
+async def get_accounts() -> list[tuple[str, str]]:
+    """Returns list of (display_name, username) from the TIKTOK table."""
+    try:
+        records = _table("TIKTOK").all(fields=["COMPTE", "NOM"])
+        accounts = []
+        for r in records:
+            username = r["fields"].get("COMPTE", "").strip()
+            nom = r["fields"].get("NOM", username).strip()
+            if username:
+                accounts.append((nom, username))
+        return accounts
+    except Exception as e:
+        logger.error("get_accounts failed: %s", e)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Subscribers (individual /start users)
 # ---------------------------------------------------------------------------
 
 async def get_subscribers() -> list[int]:
     try:
-        res = _client().table("tikthook_subscribers").select("chat_id").execute()
-        return [row["chat_id"] for row in res.data]
+        records = _table("TikThook Subscribers").all(fields=["CHAT_ID"])
+        return [int(r["fields"]["CHAT_ID"]) for r in records if "CHAT_ID" in r["fields"]]
     except Exception as e:
         logger.error("get_subscribers failed: %s", e)
         return []
 
 
 async def add_subscriber(chat_id: int) -> bool:
-    """Returns True if added, False if already present."""
     try:
-        existing = (
-            _client()
-            .table("tikthook_subscribers")
-            .select("chat_id")
-            .eq("chat_id", chat_id)
-            .execute()
+        existing = _table("TikThook Subscribers").all(
+            formula=f"{{CHAT_ID}}={chat_id}", fields=["CHAT_ID"]
         )
-        if existing.data:
+        if existing:
             return False
-        _client().table("tikthook_subscribers").insert({"chat_id": chat_id}).execute()
+        _table("TikThook Subscribers").create({"CHAT_ID": chat_id})
         return True
     except Exception as e:
         logger.error("add_subscriber failed: %s", e)
@@ -52,18 +70,14 @@ async def add_subscriber(chat_id: int) -> bool:
 
 
 async def remove_subscriber(chat_id: int) -> bool:
-    """Returns True if removed, False if not found."""
     try:
-        existing = (
-            _client()
-            .table("tikthook_subscribers")
-            .select("chat_id")
-            .eq("chat_id", chat_id)
-            .execute()
+        existing = _table("TikThook Subscribers").all(
+            formula=f"{{CHAT_ID}}={chat_id}", fields=["CHAT_ID"]
         )
-        if not existing.data:
+        if not existing:
             return False
-        _client().table("tikthook_subscribers").delete().eq("chat_id", chat_id).execute()
+        for r in existing:
+            _table("TikThook Subscribers").delete(r["id"])
         return True
     except Exception as e:
         logger.error("remove_subscriber failed: %s", e)
@@ -71,37 +85,34 @@ async def remove_subscriber(chat_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Live state
+# Group chat IDs
 # ---------------------------------------------------------------------------
 
-async def get_live_state() -> dict[str, bool]:
+async def get_group_chat_ids() -> list[int]:
+    """Returns all Telegram group chat IDs from the TikThook Groups table."""
     try:
-        res = _client().table("tikthook_live_state").select("username, is_live").execute()
-        return {row["username"]: row["is_live"] for row in res.data}
+        records = _table("TikThook Groups").all(fields=["CHAT_ID"])
+        return [int(r["fields"]["CHAT_ID"]) for r in records if "CHAT_ID" in r["fields"]]
     except Exception as e:
-        logger.error("get_live_state failed: %s", e)
-        return {}
+        logger.error("get_group_chat_ids failed: %s", e)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Live state (in-memory only — resets on restart, which is fine:
+# the first poll after restart will re-detect and re-notify if still live)
+# ---------------------------------------------------------------------------
+
+_live_state: dict[str, bool] = {}
+
+
+async def get_live_state() -> dict[str, bool]:
+    return dict(_live_state)
 
 
 async def set_live_state(username: str, is_live: bool) -> None:
-    try:
-        _client().table("tikthook_live_state").upsert(
-            {"username": username, "is_live": is_live, "updated_at": "now()"}
-        ).execute()
-    except Exception as e:
-        logger.error("set_live_state failed: %s", e)
+    _live_state[username] = is_live
 
 
 async def get_live_accounts() -> list[str]:
-    try:
-        res = (
-            _client()
-            .table("tikthook_live_state")
-            .select("username")
-            .eq("is_live", True)
-            .execute()
-        )
-        return [row["username"] for row in res.data]
-    except Exception as e:
-        logger.error("get_live_accounts failed: %s", e)
-        return []
+    return [u for u, v in _live_state.items() if v]
