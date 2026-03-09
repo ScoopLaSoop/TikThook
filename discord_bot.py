@@ -215,7 +215,7 @@ async def send_discord_notification(display_name: str, username: str, is_live: b
                 logger.warning("Discord: channel %s introuvable: %s", channel_id, exc)
                 continue
         try:
-            await ch.send(embed=embed)
+            await ch.send(content="@everyone", embed=embed)
             logger.info("  ✅ Discord envoyé → guild=%s channel=%s", guild_id, channel_id)
         except Exception as exc:
             logger.warning("  ❌ Discord échec → channel=%s: %s", channel_id, exc)
