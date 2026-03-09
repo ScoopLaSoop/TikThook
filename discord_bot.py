@@ -2,9 +2,11 @@
 Discord bot for TikThook live notifications.
 
 Slash commands:
-  /tikthook set    — set the current channel as the notification channel for this server
-  /tikthook remove — stop notifications for this server
-  /tikthook status — see which TikTok accounts are currently live
+  /tikthook set              — all accounts → this channel (global)
+  /tikthook remove           — remove global routing for this server
+  /tikthook setlive username — one account → this channel (per-account)
+  /tikthook removelive username — remove per-account routing
+  /tikthook status           — see which TikTok accounts are currently live
 """
 
 import logging
@@ -44,7 +46,7 @@ bot = TikThookBot()
 group = app_commands.Group(name="tikthook", description="Gestion des notifications TikTok Live")
 
 
-@group.command(name="set", description="Définir ce channel pour les notifications TikTok Live")
+@group.command(name="set", description="Ce channel reçoit les notifs de TOUS les comptes TikTok")
 @app_commands.checks.has_permissions(manage_channels=True)
 async def cmd_set(interaction: discord.Interaction) -> None:
     guild = interaction.guild
@@ -52,30 +54,60 @@ async def cmd_set(interaction: discord.Interaction) -> None:
     ok = await storage.set_discord_channel(guild.id, channel.id, guild.name)
     if ok:
         await interaction.response.send_message(
-            f"✅ Ce channel **#{channel.name}** recevra désormais les notifications TikTok Live !\n"
-            f"Utilise `/tikthook remove` pour désactiver.",
-            ephemeral=False,
+            f"✅ **#{channel.name}** recevra les notifications de **tous** les comptes TikTok Live !\n"
+            f"Pour cibler un seul compte : `/tikthook setlive username`\n"
+            f"Pour désactiver : `/tikthook remove`",
         )
-        logger.info("Discord channel set: guild=%s (%s) channel=%s", guild.name, guild.id, channel.id)
+        logger.info("Discord global channel set: guild=%s channel=%s", guild.name, channel.id)
     else:
-        await interaction.response.send_message(
-            "❌ Erreur lors de l'enregistrement. Réessaie.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("❌ Erreur. Réessaie.", ephemeral=True)
 
 
-@group.command(name="remove", description="Désactiver les notifications TikTok Live sur ce serveur")
+@group.command(name="remove", description="Désactiver les notifications globales pour ce serveur")
 @app_commands.checks.has_permissions(manage_channels=True)
 async def cmd_remove(interaction: discord.Interaction) -> None:
     removed = await storage.remove_discord_channel(interaction.guild.id)
     if removed:
+        await interaction.response.send_message("⚫ Notifications globales désactivées pour ce serveur.")
+    else:
         await interaction.response.send_message(
-            "⚫ Notifications TikTok Live désactivées pour ce serveur.",
-            ephemeral=False,
+            "Aucune notification globale configurée. "
+            "Pour les routages par compte : `/tikthook removelive username`",
+            ephemeral=True,
+        )
+
+
+@group.command(name="setlive", description="Ce channel reçoit les notifs d'UN seul compte TikTok")
+@app_commands.describe(username="Nom du compte TikTok (sans @)")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def cmd_setlive(interaction: discord.Interaction, username: str) -> None:
+    guild = interaction.guild
+    channel = interaction.channel
+    clean = username.lstrip("@").strip()
+    ok = await storage.set_discord_channel(guild.id, channel.id, guild.name, tiktok_account=clean)
+    if ok:
+        await interaction.response.send_message(
+            f"✅ **#{channel.name}** recevra les notifs uniquement pour **@{clean}** !\n"
+            f"Pour supprimer : `/tikthook removelive {clean}`",
+        )
+        logger.info("Discord per-account channel set: guild=%s account=@%s channel=%s", guild.name, clean, channel.id)
+    else:
+        await interaction.response.send_message("❌ Erreur. Réessaie.", ephemeral=True)
+
+
+@group.command(name="removelive", description="Supprimer le routage par compte pour ce serveur")
+@app_commands.describe(username="Nom du compte TikTok (sans @)")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def cmd_removelive(interaction: discord.Interaction, username: str) -> None:
+    clean = username.lstrip("@").strip()
+    removed = await storage.remove_discord_channel(interaction.guild.id, tiktok_account=clean)
+    if removed:
+        await interaction.response.send_message(
+            f"⚫ Routage pour **@{clean}** supprimé sur ce serveur."
         )
     else:
         await interaction.response.send_message(
-            "Aucune notification n'était configurée pour ce serveur.",
+            f"Aucun routage trouvé pour @{clean} sur ce serveur.",
             ephemeral=True,
         )
 
@@ -88,7 +120,7 @@ async def cmd_status(interaction: discord.Interaction) -> None:
         text = f"**Comptes actuellement en live :**\n{lines}"
     else:
         text = "Aucun compte n'est actuellement en live."
-    await interaction.response.send_message(text, ephemeral=False)
+    await interaction.response.send_message(text)
 
 
 @group.error
@@ -110,7 +142,7 @@ bot.tree.add_command(group)
 # ---------------------------------------------------------------------------
 
 async def send_discord_notification(display_name: str, username: str, is_live: bool) -> None:
-    channels = await storage.get_discord_channels()
+    channels = await storage.get_discord_channels(username)
     if not channels:
         return
 
@@ -128,17 +160,17 @@ async def send_discord_notification(display_name: str, username: str, is_live: b
             color=discord.Color.dark_gray(),
         )
 
-    logger.info("📨 Discord — envoi à %d serveur(s)...", len(channels))
+    logger.info("📨 Discord — envoi à %d channel(s)...", len(channels))
     for guild_id, channel_id in channels:
-        channel = bot.get_channel(channel_id)
-        if channel is None:
+        ch = bot.get_channel(channel_id)
+        if ch is None:
             try:
-                channel = await bot.fetch_channel(channel_id)
+                ch = await bot.fetch_channel(channel_id)
             except Exception as exc:
                 logger.warning("Discord: channel %s introuvable: %s", channel_id, exc)
                 continue
         try:
-            await channel.send(embed=embed)
+            await ch.send(embed=embed)
             logger.info("  ✅ Discord envoyé → guild=%s channel=%s", guild_id, channel_id)
         except Exception as exc:
             logger.warning("  ❌ Discord échec → channel=%s: %s", channel_id, exc)

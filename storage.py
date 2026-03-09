@@ -6,9 +6,14 @@ Tables used:
                          👨‍💼 Team (link → Team table),
                          Telegram "Live" ID Channel (lookup from Team)
   TikThook Channels    — TYPE (TELEGRAM | DISCORD),
+                         TIKTOK_ACCOUNT (username, empty = global)
                            TELEGRAM: CHAT_ID (number), THREAD_ID (number, optional)
                            DISCORD:  GUILD (text), CHANNEL (text), GUILD_NAME (text)
   TikThook Subscribers — CHAT_ID (number)  [auto-managed via /start /stop]
+
+Routing logic:
+  - If TIKTOK_ACCOUNT is set → notification only sent for that specific account
+  - If TIKTOK_ACCOUNT is empty → notification sent for ALL accounts (global)
 
 Note: Discord IDs stored as text (GUILD/CHANNEL) to avoid JS float precision loss.
 """
@@ -108,23 +113,76 @@ async def remove_subscriber(chat_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# TikThook Channels — Telegram groups
+# TikThook Channels — Telegram (global + per-account)
 # ---------------------------------------------------------------------------
 
-async def add_telegram_channel(chat_id: int, thread_id: int | None, description: str = "") -> bool:
-    """Register a Telegram group (or topic) in TikThook Channels. Returns True if added, False if already present."""
+def _parse_tg_record(r: dict) -> tuple[int, int | None, str]:
+    """Returns (chat_id, thread_id, tiktok_account) from a TikThook Channels record."""
+    chat_id = int(r["fields"]["CHAT_ID"])
+    raw_thread = r["fields"].get("THREAD_ID")
+    thread_id = int(raw_thread) if raw_thread else None
+    account = r["fields"].get("TIKTOK_ACCOUNT", "").strip().lower().lstrip("@")
+    return chat_id, thread_id, account
+
+
+async def get_telegram_channels(username: str | None = None) -> list[tuple[int, int | None]]:
+    """
+    Returns (chat_id, thread_id) list for Telegram destinations.
+    - If username is given: returns global channels + channels specifically for that account.
+    - If username is None: returns only global channels.
+    """
     try:
-        formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id})'
+        records = _table("TikThook Channels").all(
+            formula='{TYPE}="TELEGRAM"',
+            fields=["CHAT_ID", "THREAD_ID", "TIKTOK_ACCOUNT"],
+        )
+        result = []
+        clean = (username or "").lower().lstrip("@")
+        for r in records:
+            if "CHAT_ID" not in r["fields"]:
+                continue
+            chat_id, thread_id, account = _parse_tg_record(r)
+            if account == "" or (clean and account == clean):
+                result.append((chat_id, thread_id))
+        return result
+    except Exception as e:
+        logger.error("get_telegram_channels failed: %s", e)
+        return []
+
+
+async def add_telegram_channel(
+    chat_id: int,
+    thread_id: int | None,
+    description: str = "",
+    tiktok_account: str = "",
+) -> bool:
+    """
+    Register a Telegram group/topic.
+    If tiktok_account is set, only notifies for that specific account.
+    Returns True if added, False if already present.
+    """
+    try:
+        clean_account = tiktok_account.strip().lower().lstrip("@")
+        formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}'
         if thread_id:
-            formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}, {{THREAD_ID}}={thread_id})'
+            formula += f", {{THREAD_ID}}={thread_id}"
+        if clean_account:
+            formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
+        else:
+            formula += ', {{TIKTOK_ACCOUNT}}=""'
+        formula += ")"
+
         existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
         if existing:
             return False
+
         data: dict = {"TYPE": "TELEGRAM", "CHAT_ID": chat_id}
         if thread_id:
             data["THREAD_ID"] = thread_id
         if description:
             data["DESCRIPTION"] = description
+        if clean_account:
+            data["TIKTOK_ACCOUNT"] = clean_account
         _table("TikThook Channels").create(data)
         return True
     except Exception as e:
@@ -132,12 +190,23 @@ async def add_telegram_channel(chat_id: int, thread_id: int | None, description:
         return False
 
 
-async def remove_telegram_channel(chat_id: int, thread_id: int | None) -> bool:
-    """Remove a Telegram group (or topic) from TikThook Channels."""
+async def remove_telegram_channel(
+    chat_id: int,
+    thread_id: int | None,
+    tiktok_account: str = "",
+) -> bool:
+    """Remove a Telegram group/topic entry."""
     try:
-        formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id})'
+        clean_account = tiktok_account.strip().lower().lstrip("@")
+        formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}'
         if thread_id:
-            formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}, {{THREAD_ID}}={thread_id})'
+            formula += f", {{THREAD_ID}}={thread_id}"
+        if clean_account:
+            formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
+        else:
+            formula += ', {{TIKTOK_ACCOUNT}}=""'
+        formula += ")"
+
         existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
         if not existing:
             return False
@@ -149,45 +218,30 @@ async def remove_telegram_channel(chat_id: int, thread_id: int | None) -> bool:
         return False
 
 
-async def get_telegram_channels() -> list[tuple[int, int | None]]:
-    """
-    Returns list of (chat_id, thread_id) for all TELEGRAM entries.
-    thread_id is None for regular groups; set it to target a specific forum topic.
-    """
-    try:
-        records = _table("TikThook Channels").all(
-            formula='{TYPE}="TELEGRAM"',
-            fields=["CHAT_ID", "THREAD_ID"],
-        )
-        result = []
-        for r in records:
-            raw_chat = r["fields"].get("CHAT_ID")
-            if raw_chat is None:
-                continue
-            thread_id = r["fields"].get("THREAD_ID")
-            result.append((int(raw_chat), int(thread_id) if thread_id else None))
-        return result
-    except Exception as e:
-        logger.error("get_telegram_channels failed: %s", e)
-        return []
-
-
 # ---------------------------------------------------------------------------
-# TikThook Channels — Discord channels
+# TikThook Channels — Discord (global + per-account)
 # ---------------------------------------------------------------------------
 
-async def get_discord_channels() -> list[tuple[int, int]]:
-    """Returns list of (guild_id, channel_id) for all DISCORD entries."""
+async def get_discord_channels(username: str | None = None) -> list[tuple[int, int]]:
+    """
+    Returns (guild_id, channel_id) list for Discord destinations.
+    - If username is given: returns global channels + channels for that account.
+    - If username is None: returns only global channels.
+    """
     try:
         records = _table("TikThook Channels").all(
             formula='{TYPE}="DISCORD"',
-            fields=["GUILD", "CHANNEL"],
+            fields=["GUILD", "CHANNEL", "TIKTOK_ACCOUNT"],
         )
         result = []
+        clean = (username or "").lower().lstrip("@")
         for r in records:
             gid = r["fields"].get("GUILD")
             cid = r["fields"].get("CHANNEL")
-            if gid and cid:
+            if not gid or not cid:
+                continue
+            account = r["fields"].get("TIKTOK_ACCOUNT", "").strip().lower().lstrip("@")
+            if account == "" or (clean and account == clean):
                 result.append((int(gid), int(cid)))
         return result
     except Exception as e:
@@ -195,19 +249,34 @@ async def get_discord_channels() -> list[tuple[int, int]]:
         return []
 
 
-async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -> bool:
-    """Upsert: one entry per guild."""
+async def set_discord_channel(
+    guild_id: int,
+    channel_id: int,
+    guild_name: str,
+    tiktok_account: str = "",
+) -> bool:
+    """
+    Upsert a Discord channel entry.
+    If tiktok_account is set, only notifies for that specific account.
+    """
     try:
-        existing = _table("TikThook Channels").all(
-            formula=f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}")',
-            fields=["GUILD"],
-        )
-        data = {
+        clean_account = tiktok_account.strip().lower().lstrip("@")
+        formula = f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}"'
+        if clean_account:
+            formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
+        else:
+            formula += ', {{TIKTOK_ACCOUNT}}=""'
+        formula += ")"
+
+        existing = _table("TikThook Channels").all(formula=formula, fields=["GUILD"])
+        data: dict = {
             "TYPE": "DISCORD",
             "GUILD": str(guild_id),
             "CHANNEL": str(channel_id),
             "GUILD_NAME": guild_name,
         }
+        if clean_account:
+            data["TIKTOK_ACCOUNT"] = clean_account
         if existing:
             _table("TikThook Channels").update(existing[0]["id"], data)
         else:
@@ -218,12 +287,17 @@ async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -
         return False
 
 
-async def remove_discord_channel(guild_id: int) -> bool:
+async def remove_discord_channel(guild_id: int, tiktok_account: str = "") -> bool:
     try:
-        existing = _table("TikThook Channels").all(
-            formula=f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}")',
-            fields=["GUILD"],
-        )
+        clean_account = tiktok_account.strip().lower().lstrip("@")
+        formula = f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}"'
+        if clean_account:
+            formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
+        else:
+            formula += ', {{TIKTOK_ACCOUNT}}=""'
+        formula += ")"
+
+        existing = _table("TikThook Channels").all(formula=formula, fields=["GUILD"])
         if not existing:
             return False
         for r in existing:
