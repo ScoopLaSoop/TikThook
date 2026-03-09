@@ -89,6 +89,7 @@ async def send_live_notification(
     display_name: str,
     username: str,
     is_live: bool,
+    account_group_ids: list[int] | None = None,
 ) -> None:
     status = "EN LIVE" if is_live else "FIN DE LIVE"
     logger.info("🔔 Transition détectée : @%s — %s", username, status)
@@ -98,15 +99,22 @@ async def send_live_notification(
     else:
         text = f"⚫ *{display_name}* (@{username}) a terminé son live."
 
-    # Collect all targets: groups from Airtable + individual subscribers
     seen: set = set()
     targets: list[int] = []
 
+    # 1. Groups linked directly to this account in the TIKTOK table
+    for chat_id in (account_group_ids or []):
+        if chat_id not in seen:
+            seen.add(chat_id)
+            targets.append(chat_id)
+
+    # 2. Global groups from TikThook Groups table (fallback / always notified)
     for chat_id in await storage.get_group_chat_ids():
         if chat_id not in seen:
             seen.add(chat_id)
             targets.append(chat_id)
 
+    # 3. Individual subscribers (/start users)
     for chat_id in await storage.get_subscribers():
         if chat_id not in seen:
             seen.add(chat_id)
@@ -115,7 +123,7 @@ async def send_live_notification(
     if not targets:
         logger.warning(
             "⚠️  Notification @%s ignorée : 0 destinataires. "
-            "Ajoute un groupe dans 'TikThook Groups' ou fais /start dans le bot.",
+            "Ajoute des groupes dans GROUPES_TELEGRAM ou 'TikThook Groups', ou fais /start.",
             username,
         )
         return

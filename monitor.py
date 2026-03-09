@@ -15,12 +15,14 @@ import storage
 
 logger = logging.getLogger(__name__)
 
-NotifyCallback = Callable[[str, str, bool], Coroutine[Any, Any, None]]
+NotifyCallback = Callable[[str, str, bool, list[int]], Coroutine[Any, Any, None]]
+# notify(display_name, username, is_live, account_group_ids)
 
 
 async def _check_account(
     display_name: str,
     username: str,
+    group_ids: list[int],
     notify: NotifyCallback,
 ) -> None:
     try:
@@ -40,7 +42,7 @@ async def _check_account(
     await storage.set_live_state(username, currently_live)
 
     try:
-        await notify(display_name, username, currently_live)
+        await notify(display_name, username, currently_live, group_ids)
     except Exception as exc:
         logger.error("Notify callback failed for @%s: %s", username, exc)
 
@@ -58,8 +60,8 @@ async def polling_loop(notify: NotifyCallback) -> None:
         logger.debug("Poll cycle — %d accounts to check", len(accounts))
 
         tasks = [
-            _run_with_jitter(name, username, notify, random.uniform(0, 3))
-            for name, username in accounts
+            _run_with_jitter(name, username, group_ids, notify, random.uniform(0, 3))
+            for name, username, group_ids in accounts
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.sleep(POLL_INTERVAL)
@@ -68,8 +70,9 @@ async def polling_loop(notify: NotifyCallback) -> None:
 async def _run_with_jitter(
     display_name: str,
     username: str,
+    group_ids: list[int],
     notify: NotifyCallback,
     delay: float,
 ) -> None:
     await asyncio.sleep(delay)
-    await _check_account(display_name, username, notify)
+    await _check_account(display_name, username, group_ids, notify)

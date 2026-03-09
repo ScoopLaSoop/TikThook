@@ -2,9 +2,10 @@
 Persistent storage via Airtable (base: ALLURE AGENCY).
 
 Tables used:
-  TIKTOK                     — COMPTE (username), NOM (display name)
+  TIKTOK                     — COMPTE (username), NOM (display name),
+                               GROUPES_TELEGRAM (comma-separated group IDs, optional)
   TikThook Subscribers       — CHAT_ID (bigint)
-  TikThook Groups            — CHAT_ID (bigint), DESCRIPTION (text)
+  TikThook Groups            — CHAT_ID (bigint), DESCRIPTION (text)  [global fallback]
   TikThook Discord Channels  — GUILD_ID (bigint), CHANNEL_ID (bigint), GUILD_NAME (text)
 """
 
@@ -27,16 +28,31 @@ def _table(name: str):
 # TikTok accounts (loaded from Airtable at each poll cycle)
 # ---------------------------------------------------------------------------
 
-async def get_accounts() -> list[tuple[str, str]]:
-    """Returns list of (display_name, username) from the TIKTOK table."""
+def _parse_group_ids(raw: str) -> list[int]:
+    """Parse a comma/newline-separated string of Telegram group IDs into a list of ints."""
+    ids = []
+    for part in raw.replace("\n", ",").split(","):
+        part = part.strip()
+        if part:
+            try:
+                ids.append(int(part))
+            except ValueError:
+                pass
+    return ids
+
+
+async def get_accounts() -> list[tuple[str, str, list[int]]]:
+    """Returns list of (display_name, username, telegram_group_ids) from the TIKTOK table."""
     try:
-        records = _table("TIKTOK").all(fields=["COMPTE", "NOM"])
+        records = _table("TIKTOK").all(fields=["COMPTE", "NOM", "GROUPES_TELEGRAM"])
         accounts = []
         for r in records:
             username = r["fields"].get("COMPTE", "").strip()
             nom = r["fields"].get("NOM", username).strip()
+            raw_groups = r["fields"].get("GROUPES_TELEGRAM", "")
+            group_ids = _parse_group_ids(raw_groups) if raw_groups else []
             if username:
-                accounts.append((nom, username))
+                accounts.append((nom, username, group_ids))
         return accounts
     except Exception as e:
         logger.error("get_accounts failed: %s", e)
