@@ -5,7 +5,7 @@ Commands:
     /start  — subscribe to live notifications
     /stop   — unsubscribe
     /status — list accounts currently live
-    /id     — get current chat ID (to add to TikThook Groups in Airtable)
+    /id     — get current chat ID and thread ID (for Airtable config)
 """
 
 import logging
@@ -30,7 +30,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if added:
         await update.message.reply_text(
             "Tu es maintenant abonné(e) aux notifications TikTok Live ! 🔔\n"
-            "Tu recevras un message dès qu'un compte surveille passe en live.\n\n"
+            "Tu recevras un message dès qu'un compte surveillé passe en live.\n\n"
             "Utilise /stop pour te désabonner."
         )
     else:
@@ -66,6 +66,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     user = update.effective_user
+    msg = update.message
+    thread_id = msg.message_thread_id if msg else None
+
     lines = [
         f"*Ton user ID :* `{user.id}`",
         f"*Chat ID (ce chat) :* `{chat.id}`",
@@ -73,9 +76,13 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
     if chat.title:
         lines.append(f"*Nom du groupe :* {chat.title}")
+    if thread_id:
+        lines.append(f"*Thread ID (topic actuel) :* `{thread_id}`")
+
     lines.append(
-        "\n➡️ Pour notifier ce groupe, ajoute ce *Chat ID* dans la table "
-        "*TikThook Groups* de ta base Airtable (champ CHAT\\_ID)."
+        "\n➡️ Dans Airtable *TikThook Groups*, ajoute une ligne avec :\n"
+        "• *CHAT\\_ID* = Chat ID du groupe\n"
+        "• *THREAD\\_ID* = Thread ID du topic *(laisser vide pour le topic général)*"
     )
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
@@ -99,19 +106,19 @@ async def send_live_notification(
         text = f"⚫ *{display_name}* (@{username}) a terminé son live."
 
     seen: set = set()
-    targets: list[int] = []
+    targets: list[tuple[int, int | None]] = []
 
-    # 1. Telegram groups (table TikThook Groups)
-    for chat_id in await storage.get_group_chat_ids():
+    # 1. Telegram groups (table TikThook Groups) — with optional thread_id
+    for chat_id, thread_id in await storage.get_group_chat_ids():
         if chat_id not in seen:
             seen.add(chat_id)
-            targets.append(chat_id)
+            targets.append((chat_id, thread_id))
 
-    # 2. Individual subscribers (/start users)
+    # 2. Individual subscribers (/start users) — no thread
     for chat_id in await storage.get_subscribers():
         if chat_id not in seen:
             seen.add(chat_id)
-            targets.append(chat_id)
+            targets.append((chat_id, None))
 
     if not targets:
         logger.warning(
@@ -122,16 +129,15 @@ async def send_live_notification(
         return
 
     logger.info("📨 Envoi à %d destinataire(s)...", len(targets))
-    for target in targets:
+    for chat_id, thread_id in targets:
         try:
-            await app.bot.send_message(
-                chat_id=target,
-                text=text,
-                parse_mode=ParseMode.MARKDOWN,
-            )
-            logger.info("  ✅ Envoyé à %s", target)
+            kwargs = {"chat_id": chat_id, "text": text, "parse_mode": ParseMode.MARKDOWN}
+            if thread_id:
+                kwargs["message_thread_id"] = thread_id
+            await app.bot.send_message(**kwargs)
+            logger.info("  ✅ Envoyé à %s (thread=%s)", chat_id, thread_id)
         except Exception as exc:
-            logger.warning("  ❌ Échec envoi à %s: %s", target, exc)
+            logger.warning("  ❌ Échec envoi à %s: %s", chat_id, exc)
 
 
 # ---------------------------------------------------------------------------

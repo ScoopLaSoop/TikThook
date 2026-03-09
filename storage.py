@@ -4,8 +4,11 @@ Persistent storage via Airtable (base: ALLURE AGENCY).
 Tables used:
   TikThook                  — COMPTE (TikTok username), NOM (display name)
   TikThook Subscribers      — CHAT_ID (Telegram user/chat ID, via /start)
-  TikThook Groups           — CHAT_ID (Telegram group ID to notify)
-  TikThook Discord Channels — GUILD_ID, CHANNEL_ID, GUILD_NAME
+  TikThook Groups           — CHAT_ID (number), THREAD_ID (number, optional)
+  TikThook Discord Channels — GUILD (text), CHANNEL (text), GUILD_NAME (text)
+
+Note: Discord IDs are stored as text (GUILD / CHANNEL fields) to avoid
+JavaScript float precision loss on 64-bit snowflake IDs.
 """
 
 import logging
@@ -90,14 +93,26 @@ async def remove_subscriber(chat_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Telegram — group chat IDs
+# Telegram — group chat IDs (with optional forum thread)
 # ---------------------------------------------------------------------------
 
-async def get_group_chat_ids() -> list[int]:
-    """Returns all Telegram group chat IDs from the TikThook Groups table."""
+async def get_group_chat_ids() -> list[tuple[int, int | None]]:
+    """
+    Returns list of (chat_id, thread_id) from TikThook Groups.
+    thread_id is None for regular groups; set it to target a specific forum topic.
+    """
     try:
-        records = _table("TikThook Groups").all(fields=["CHAT_ID"])
-        return [int(r["fields"]["CHAT_ID"]) for r in records if "CHAT_ID" in r["fields"]]
+        records = _table("TikThook Groups").all(fields=["CHAT_ID", "THREAD_ID"])
+        result = []
+        for r in records:
+            raw_chat = r["fields"].get("CHAT_ID")
+            if raw_chat is None:
+                continue
+            chat_id = int(raw_chat)
+            raw_thread = r["fields"].get("THREAD_ID")
+            thread_id = int(raw_thread) if raw_thread else None
+            result.append((chat_id, thread_id))
+        return result
     except Exception as e:
         logger.error("get_group_chat_ids failed: %s", e)
         return []
@@ -105,16 +120,17 @@ async def get_group_chat_ids() -> list[int]:
 
 # ---------------------------------------------------------------------------
 # Discord channels
+# Note: GUILD and CHANNEL are singleLineText fields to preserve 64-bit IDs.
 # ---------------------------------------------------------------------------
 
 async def get_discord_channels() -> list[tuple[int, int]]:
     """Returns list of (guild_id, channel_id) from TikThook Discord Channels."""
     try:
-        records = _table("TikThook Discord Channels").all(fields=["GUILD_ID", "CHANNEL_ID"])
+        records = _table("TikThook Discord Channels").all(fields=["GUILD", "CHANNEL"])
         result = []
         for r in records:
-            gid = r["fields"].get("GUILD_ID")
-            cid = r["fields"].get("CHANNEL_ID")
+            gid = r["fields"].get("GUILD")
+            cid = r["fields"].get("CHANNEL")
             if gid and cid:
                 result.append((int(gid), int(cid)))
         return result
@@ -124,12 +140,16 @@ async def get_discord_channels() -> list[tuple[int, int]]:
 
 
 async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -> bool:
-    """Upsert: one entry per guild."""
+    """Upsert: one entry per guild. IDs stored as strings to avoid precision loss."""
     try:
         existing = _table("TikThook Discord Channels").all(
-            formula=f"{{GUILD_ID}}={guild_id}", fields=["GUILD_ID"]
+            formula=f'{{GUILD}}="{guild_id}"', fields=["GUILD"]
         )
-        data = {"GUILD_ID": guild_id, "CHANNEL_ID": channel_id, "GUILD_NAME": guild_name}
+        data = {
+            "GUILD": str(guild_id),
+            "CHANNEL": str(channel_id),
+            "GUILD_NAME": guild_name,
+        }
         if existing:
             _table("TikThook Discord Channels").update(existing[0]["id"], data)
         else:
@@ -143,7 +163,7 @@ async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -
 async def remove_discord_channel(guild_id: int) -> bool:
     try:
         existing = _table("TikThook Discord Channels").all(
-            formula=f"{{GUILD_ID}}={guild_id}", fields=["GUILD_ID"]
+            formula=f'{{GUILD}}="{guild_id}"', fields=["GUILD"]
         )
         if not existing:
             return False
