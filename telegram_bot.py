@@ -13,7 +13,7 @@ Commands:
 
 import logging
 
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.constants import ParseMode
 
@@ -80,14 +80,15 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if chat.title:
         lines.append(f"*Nom du groupe :* {chat.title}")
     if thread_id:
-        lines.append(f"*Thread ID (topic actuel) :* `{thread_id}`")
+        lines.append(f"*Topic ID (ce topic) :* `{thread_id}`")
 
-    lines.append(
-        "\n➡️ Dans Airtable *TikThook Channels*, ajoute une ligne avec :\n"
-        "• *TYPE* = TELEGRAM\n"
-        "• *CHAT\\_ID* = Chat ID du groupe\n"
-        "• *THREAD\\_ID* = Thread ID du topic *(laisser vide pour le topic général)*"
-    )
+    if chat.type != "private":
+        lines.append(
+            "\n➡️ Utilise `/addgroup` directement ici pour enregistrer ce "
+            + ("topic" if thread_id else "groupe")
+            + " automatiquement."
+        )
+
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -95,46 +96,43 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Help command
 # ---------------------------------------------------------------------------
 
-HELP_TEXT = """
-🤖 *TikThook — Bot de notifications TikTok Live*
-
-*Commandes disponibles :*
-
-👤 *En privé (abonnement personnel)*
-• `/start` — Recevoir les notifs directement dans ce chat
-• `/stop` — Arrêter de recevoir les notifs
-• `/status` — Voir quels comptes sont en live en ce moment
-
-👥 *Dans un groupe (admin uniquement)*
-• `/addgroup` — Enregistrer ce groupe pour recevoir les notifs
-  _→ Dans un forum : tape la commande dans le topic souhaité_
-• `/removegroup` — Désactiver les notifs pour ce groupe
-
-🔧 *Utilitaire*
-• `/id` — Afficher l'ID de ce chat et du topic actuel
-• `/help` — Afficher ce message
-
-━━━━━━━━━━━━━━━━━━━━━━━
-📋 *Bonnes pratiques Telegram*
-
-✅ Ajoute le bot comme *administrateur* du groupe avant de faire `/addgroup` \(sinon il ne pourra pas envoyer de messages\)
-✅ Pour les groupes avec *topics* \(forums\), tape `/addgroup` directement *dans le topic* qui recevra les notifs
-✅ Un seul `/start` suffit par personne — pas besoin de le refaire à chaque connexion
-✅ Utilise `/status` pour vérifier en temps réel qui est en live
-
-━━━━━━━━━━━━━━━━━━━━━━━
-🎮 *Bonnes pratiques Discord*
-
-✅ Invite le bot sur ton serveur avec les permissions *Envoyer des messages* et *Lire les messages*
-✅ Va dans le channel où tu veux recevoir les notifs et tape `/tikthook set`
-✅ `/tikthook remove` pour désactiver sur ce serveur
-✅ `/tikthook status` pour voir les comptes en live directement depuis Discord
-✅ Seuls les membres avec la permission *Gérer les channels* peuvent configurer le bot
-""".strip()
+HELP_TEXT = (
+    "🤖 <b>TikThook — Notifications TikTok Live</b>\n"
+    "\n"
+    "👤 <b>En privé (abonnement personnel)</b>\n"
+    "• /start — Recevoir les notifs dans ce chat\n"
+    "• /stop — Arrêter de recevoir les notifs\n"
+    "• /status — Voir qui est en live en ce moment\n"
+    "\n"
+    "👥 <b>Dans un groupe (admin uniquement)</b>\n"
+    "• /addgroup — Enregistrer ce groupe/topic pour recevoir les notifs\n"
+    "• /removegroup — Désactiver les notifs pour ce groupe/topic\n"
+    "\n"
+    "🔧 <b>Utilitaire</b>\n"
+    "• /id — Afficher l'ID de ce chat et du topic\n"
+    "• /help — Afficher ce message\n"
+    "\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━\n"
+    "📋 <b>Bonnes pratiques Telegram</b>\n"
+    "\n"
+    "✅ Ajoute le bot comme <b>administrateur</b> du groupe avant de faire /addgroup\n"
+    "✅ Groupe avec topics (forum) ? Tape /addgroup <b>directement dans le topic</b> voulu — le bot cible ce topic automatiquement\n"
+    "✅ Un seul /start suffit — pas besoin de le refaire à chaque connexion\n"
+    "✅ /status pour voir en temps réel qui est en live\n"
+    "\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━\n"
+    "🎮 <b>Bonnes pratiques Discord</b>\n"
+    "\n"
+    "✅ Invite le bot avec les permissions <b>Envoyer des messages</b> et <b>Lire les messages</b>\n"
+    "✅ Va dans le channel cible et tape <code>/tikthook set</code>\n"
+    "✅ <code>/tikthook remove</code> pour désactiver sur ce serveur\n"
+    "✅ <code>/tikthook status</code> pour voir les comptes en live depuis Discord\n"
+    "✅ Nécessite la permission <b>Gérer les channels</b>"
+)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.HTML)
 
 
 # ---------------------------------------------------------------------------
@@ -274,10 +272,22 @@ async def send_live_notification(
 # Application factory
 # ---------------------------------------------------------------------------
 
+BOT_COMMANDS = [
+    BotCommand("start",       "S'abonner aux notifications TikTok Live"),
+    BotCommand("stop",        "Se désabonner des notifications"),
+    BotCommand("status",      "Voir les comptes actuellement en live"),
+    BotCommand("addgroup",    "Enregistrer ce groupe/topic (admin)"),
+    BotCommand("removegroup", "Désactiver les notifs pour ce groupe (admin)"),
+    BotCommand("id",          "Afficher l'ID de ce chat et du topic"),
+    BotCommand("help",        "Aide et bonnes pratiques"),
+]
+
+
 def build_application() -> Application:
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
+        .post_init(_register_commands)
         .build()
     )
     app.add_handler(CommandHandler("start", cmd_start))
@@ -288,3 +298,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("removegroup", cmd_removegroup))
     app.add_handler(CommandHandler("help", cmd_help))
     return app
+
+
+async def _register_commands(app: Application) -> None:
+    await app.bot.set_my_commands(BOT_COMMANDS)
+    logger.info("Bot commands registered with Telegram.")
