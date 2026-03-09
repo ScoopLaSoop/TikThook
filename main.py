@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 async def run(app: Application) -> None:
-    async def notify(display_name: str, username: str, is_live: bool) -> None:
+    async def notify(display_name: str, username: str, is_live: bool, live_channel_ids: list[int]) -> None:
         await asyncio.gather(
-            send_live_notification(app, display_name, username, is_live),
+            send_live_notification(app, display_name, username, is_live, live_channel_ids),
             send_discord_notification(display_name, username, is_live),
         )
 

@@ -2,13 +2,15 @@
 Persistent storage via Airtable (base: ALLURE AGENCY).
 
 Tables used:
-  TikThook                  — COMPTE (TikTok username), NOM (display name)
-  TikThook Subscribers      — CHAT_ID (Telegram user/chat ID, via /start)
-  TikThook Groups           — CHAT_ID (number), THREAD_ID (number, optional)
-  TikThook Discord Channels — GUILD (text), CHANNEL (text), GUILD_NAME (text)
+  TikThook             — COMPTE (username), NOM (display name),
+                         👨‍💼 Team (link → Team table),
+                         Telegram "Live" ID Channel (lookup from Team)
+  TikThook Channels    — TYPE (TELEGRAM | DISCORD),
+                           TELEGRAM: CHAT_ID (number), THREAD_ID (number, optional)
+                           DISCORD:  GUILD (text), CHANNEL (text), GUILD_NAME (text)
+  TikThook Subscribers — CHAT_ID (number)  [auto-managed via /start /stop]
 
-Note: Discord IDs are stored as text (GUILD / CHANNEL fields) to avoid
-JavaScript float precision loss on 64-bit snowflake IDs.
+Note: Discord IDs stored as text (GUILD/CHANNEL) to avoid JS float precision loss.
 """
 
 import logging
@@ -32,16 +34,31 @@ def _table(name: str):
 # TikTok accounts
 # ---------------------------------------------------------------------------
 
-async def get_accounts() -> list[tuple[str, str]]:
-    """Returns list of (display_name, username) from the TikThook table."""
+async def get_accounts() -> list[tuple[str, str, list[int]]]:
+    """
+    Returns list of (display_name, username, live_channel_ids).
+    live_channel_ids: Telegram channel IDs from the linked Team member's
+    'Telegram Live ID Channel' field. Empty list if no Team linked.
+    """
     try:
-        records = _table("TikThook").all(fields=["COMPTE", "NOM"])
+        records = _table("TikThook").all(
+            fields=["COMPTE", "NOM", 'Telegram "Live" ID Channel (from 👨‍💼 Team 2)']
+        )
         accounts = []
         for r in records:
             username = r["fields"].get("COMPTE", "").strip()
             nom = r["fields"].get("NOM", username).strip()
-            if username:
-                accounts.append((nom, username))
+            if not username:
+                continue
+            raw_ids = r["fields"].get('Telegram "Live" ID Channel (from 👨‍💼 Team 2)', [])
+            live_channel_ids: list[int] = []
+            for raw in (raw_ids if isinstance(raw_ids, list) else [raw_ids]):
+                try:
+                    if raw:
+                        live_channel_ids.append(int(str(raw).strip()))
+                except (ValueError, TypeError):
+                    pass
+            accounts.append((nom, username, live_channel_ids))
         return accounts
     except Exception as e:
         logger.error("get_accounts failed: %s", e)
@@ -62,7 +79,6 @@ async def get_subscribers() -> list[int]:
 
 
 async def add_subscriber(chat_id: int) -> bool:
-    """Returns True if added, False if already present."""
     try:
         existing = _table("TikThook Subscribers").all(
             formula=f"{{CHAT_ID}}={chat_id}", fields=["CHAT_ID"]
@@ -77,7 +93,6 @@ async def add_subscriber(chat_id: int) -> bool:
 
 
 async def remove_subscriber(chat_id: int) -> bool:
-    """Returns True if removed, False if not found."""
     try:
         existing = _table("TikThook Subscribers").all(
             formula=f"{{CHAT_ID}}={chat_id}", fields=["CHAT_ID"]
@@ -93,40 +108,43 @@ async def remove_subscriber(chat_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Telegram — group chat IDs (with optional forum thread)
+# TikThook Channels — Telegram groups
 # ---------------------------------------------------------------------------
 
-async def get_group_chat_ids() -> list[tuple[int, int | None]]:
+async def get_telegram_channels() -> list[tuple[int, int | None]]:
     """
-    Returns list of (chat_id, thread_id) from TikThook Groups.
+    Returns list of (chat_id, thread_id) for all TELEGRAM entries.
     thread_id is None for regular groups; set it to target a specific forum topic.
     """
     try:
-        records = _table("TikThook Groups").all(fields=["CHAT_ID", "THREAD_ID"])
+        records = _table("TikThook Channels").all(
+            formula='{TYPE}="TELEGRAM"',
+            fields=["CHAT_ID", "THREAD_ID"],
+        )
         result = []
         for r in records:
             raw_chat = r["fields"].get("CHAT_ID")
             if raw_chat is None:
                 continue
-            chat_id = int(raw_chat)
-            raw_thread = r["fields"].get("THREAD_ID")
-            thread_id = int(raw_thread) if raw_thread else None
-            result.append((chat_id, thread_id))
+            thread_id = r["fields"].get("THREAD_ID")
+            result.append((int(raw_chat), int(thread_id) if thread_id else None))
         return result
     except Exception as e:
-        logger.error("get_group_chat_ids failed: %s", e)
+        logger.error("get_telegram_channels failed: %s", e)
         return []
 
 
 # ---------------------------------------------------------------------------
-# Discord channels
-# Note: GUILD and CHANNEL are singleLineText fields to preserve 64-bit IDs.
+# TikThook Channels — Discord channels
 # ---------------------------------------------------------------------------
 
 async def get_discord_channels() -> list[tuple[int, int]]:
-    """Returns list of (guild_id, channel_id) from TikThook Discord Channels."""
+    """Returns list of (guild_id, channel_id) for all DISCORD entries."""
     try:
-        records = _table("TikThook Discord Channels").all(fields=["GUILD", "CHANNEL"])
+        records = _table("TikThook Channels").all(
+            formula='{TYPE}="DISCORD"',
+            fields=["GUILD", "CHANNEL"],
+        )
         result = []
         for r in records:
             gid = r["fields"].get("GUILD")
@@ -140,20 +158,22 @@ async def get_discord_channels() -> list[tuple[int, int]]:
 
 
 async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -> bool:
-    """Upsert: one entry per guild. IDs stored as strings to avoid precision loss."""
+    """Upsert: one entry per guild."""
     try:
-        existing = _table("TikThook Discord Channels").all(
-            formula=f'{{GUILD}}="{guild_id}"', fields=["GUILD"]
+        existing = _table("TikThook Channels").all(
+            formula=f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}")',
+            fields=["GUILD"],
         )
         data = {
+            "TYPE": "DISCORD",
             "GUILD": str(guild_id),
             "CHANNEL": str(channel_id),
             "GUILD_NAME": guild_name,
         }
         if existing:
-            _table("TikThook Discord Channels").update(existing[0]["id"], data)
+            _table("TikThook Channels").update(existing[0]["id"], data)
         else:
-            _table("TikThook Discord Channels").create(data)
+            _table("TikThook Channels").create(data)
         return True
     except Exception as e:
         logger.error("set_discord_channel failed: %s", e)
@@ -162,13 +182,14 @@ async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -
 
 async def remove_discord_channel(guild_id: int) -> bool:
     try:
-        existing = _table("TikThook Discord Channels").all(
-            formula=f'{{GUILD}}="{guild_id}"', fields=["GUILD"]
+        existing = _table("TikThook Channels").all(
+            formula=f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}")',
+            fields=["GUILD"],
         )
         if not existing:
             return False
         for r in existing:
-            _table("TikThook Discord Channels").delete(r["id"])
+            _table("TikThook Channels").delete(r["id"])
         return True
     except Exception as e:
         logger.error("remove_discord_channel failed: %s", e)
@@ -176,8 +197,7 @@ async def remove_discord_channel(guild_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Live state (in-memory — resets on restart, intentional:
-# first poll after restart re-detects and re-notifies if still live)
+# Live state (in-memory — resets on restart, intentional)
 # ---------------------------------------------------------------------------
 
 _live_state: dict[str, bool] = {}

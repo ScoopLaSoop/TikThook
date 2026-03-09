@@ -80,7 +80,8 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append(f"*Thread ID (topic actuel) :* `{thread_id}`")
 
     lines.append(
-        "\n➡️ Dans Airtable *TikThook Groups*, ajoute une ligne avec :\n"
+        "\n➡️ Dans Airtable *TikThook Channels*, ajoute une ligne avec :\n"
+        "• *TYPE* = TELEGRAM\n"
         "• *CHAT\\_ID* = Chat ID du groupe\n"
         "• *THREAD\\_ID* = Thread ID du topic *(laisser vide pour le topic général)*"
     )
@@ -96,6 +97,7 @@ async def send_live_notification(
     display_name: str,
     username: str,
     is_live: bool,
+    live_channel_ids: list[int],
 ) -> None:
     status = "EN LIVE" if is_live else "FIN DE LIVE"
     logger.info("🔔 Transition détectée : @%s — %s", username, status)
@@ -105,16 +107,22 @@ async def send_live_notification(
     else:
         text = f"⚫ *{display_name}* (@{username}) a terminé son live."
 
-    seen: set = set()
+    seen: set[int] = set()
     targets: list[tuple[int, int | None]] = []
 
-    # 1. Telegram groups (table TikThook Groups) — with optional thread_id
-    for chat_id, thread_id in await storage.get_group_chat_ids():
+    # 1. Telegram channel lié à la modèle (Telegram "Live" ID Channel from Team)
+    for chat_id in live_channel_ids:
+        if chat_id not in seen:
+            seen.add(chat_id)
+            targets.append((chat_id, None))
+
+    # 2. Groupes Telegram globaux (table TikThook Channels, TYPE=TELEGRAM)
+    for chat_id, thread_id in await storage.get_telegram_channels():
         if chat_id not in seen:
             seen.add(chat_id)
             targets.append((chat_id, thread_id))
 
-    # 2. Individual subscribers (/start users) — no thread
+    # 3. Abonnés individuels (/start)
     for chat_id in await storage.get_subscribers():
         if chat_id not in seen:
             seen.add(chat_id)
@@ -123,15 +131,20 @@ async def send_live_notification(
     if not targets:
         logger.warning(
             "⚠️  Notification @%s ignorée : 0 destinataires. "
-            "Ajoute un groupe dans 'TikThook Groups' (Airtable) ou fais /start dans le bot.",
+            "Lie un membre Team au compte TikThook, ajoute un groupe dans "
+            "'TikThook Channels' (TYPE=TELEGRAM), ou fais /start.",
             username,
         )
         return
 
-    logger.info("📨 Envoi à %d destinataire(s)...", len(targets))
+    logger.info("📨 Envoi Telegram à %d destinataire(s)...", len(targets))
     for chat_id, thread_id in targets:
         try:
-            kwargs = {"chat_id": chat_id, "text": text, "parse_mode": ParseMode.MARKDOWN}
+            kwargs: dict = {
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": ParseMode.MARKDOWN,
+            }
             if thread_id:
                 kwargs["message_thread_id"] = thread_id
             await app.bot.send_message(**kwargs)
