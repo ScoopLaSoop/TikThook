@@ -2,9 +2,10 @@
 Persistent storage via Airtable (base: ALLURE AGENCY).
 
 Tables used:
-  TIKTOK              — COMPTE (username), NOM (display name)
-  TikThook Subscribers — CHAT_ID (bigint)
-  TikThook Groups     — CHAT_ID (bigint), DESCRIPTION (text)
+  TIKTOK                     — COMPTE (username), NOM (display name)
+  TikThook Subscribers       — CHAT_ID (bigint)
+  TikThook Groups            — CHAT_ID (bigint), DESCRIPTION (text)
+  TikThook Discord Channels  — GUILD_ID (bigint), CHANNEL_ID (bigint), GUILD_NAME (text)
 """
 
 import logging
@@ -96,6 +97,58 @@ async def get_group_chat_ids() -> list[int]:
     except Exception as e:
         logger.error("get_group_chat_ids failed: %s", e)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Discord channels
+# ---------------------------------------------------------------------------
+
+async def get_discord_channels() -> list[tuple[int, int]]:
+    """Returns list of (guild_id, channel_id) from TikThook Discord Channels."""
+    try:
+        records = _table("TikThook Discord Channels").all(fields=["GUILD_ID", "CHANNEL_ID"])
+        result = []
+        for r in records:
+            gid = r["fields"].get("GUILD_ID")
+            cid = r["fields"].get("CHANNEL_ID")
+            if gid and cid:
+                result.append((int(gid), int(cid)))
+        return result
+    except Exception as e:
+        logger.error("get_discord_channels failed: %s", e)
+        return []
+
+
+async def set_discord_channel(guild_id: int, channel_id: int, guild_name: str) -> bool:
+    """Upsert: one entry per guild (replace if already exists)."""
+    try:
+        existing = _table("TikThook Discord Channels").all(
+            formula=f"{{GUILD_ID}}={guild_id}", fields=["GUILD_ID"]
+        )
+        data = {"GUILD_ID": guild_id, "CHANNEL_ID": channel_id, "GUILD_NAME": guild_name}
+        if existing:
+            _table("TikThook Discord Channels").update(existing[0]["id"], data)
+        else:
+            _table("TikThook Discord Channels").create(data)
+        return True
+    except Exception as e:
+        logger.error("set_discord_channel failed: %s", e)
+        return False
+
+
+async def remove_discord_channel(guild_id: int) -> bool:
+    try:
+        existing = _table("TikThook Discord Channels").all(
+            formula=f"{{GUILD_ID}}={guild_id}", fields=["GUILD_ID"]
+        )
+        if not existing:
+            return False
+        for r in existing:
+            _table("TikThook Discord Channels").delete(r["id"])
+        return True
+    except Exception as e:
+        logger.error("remove_discord_channel failed: %s", e)
+        return False
 
 
 # ---------------------------------------------------------------------------
