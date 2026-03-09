@@ -41,22 +41,53 @@ def _parse_group_ids(raw: str) -> list[int]:
     return ids
 
 
-async def get_accounts() -> list[tuple[str, str, list[int]]]:
-    """Returns list of (display_name, username, telegram_group_ids) from the TIKTOK table."""
+async def get_accounts() -> list[tuple[str, str]]:
+    """Returns list of (display_name, username) from the TIKTOK table."""
     try:
-        records = _table("TIKTOK").all(fields=["COMPTE", "NOM", "GROUPES_TELEGRAM"])
+        records = _table("TIKTOK").all(fields=["COMPTE", "NOM"])
         accounts = []
         for r in records:
             username = r["fields"].get("COMPTE", "").strip()
             nom = r["fields"].get("NOM", username).strip()
-            raw_groups = r["fields"].get("GROUPES_TELEGRAM", "")
-            group_ids = _parse_group_ids(raw_groups) if raw_groups else []
             if username:
-                accounts.append((nom, username, group_ids))
+                accounts.append((nom, username))
         return accounts
     except Exception as e:
         logger.error("get_accounts failed: %s", e)
         return []
+
+
+async def get_all_telegram_groups() -> list[int]:
+    """
+    Returns all unique Telegram group IDs from:
+    - GROUPES_TELEGRAM field across ALL rows of the TIKTOK table
+    - TikThook Groups table (global fallback)
+    Every notification goes to ALL of these groups, regardless of which account triggered it.
+    """
+    seen: set[int] = set()
+    result: list[int] = []
+
+    try:
+        records = _table("TIKTOK").all(fields=["GROUPES_TELEGRAM"])
+        for r in records:
+            raw = r["fields"].get("GROUPES_TELEGRAM", "")
+            if raw:
+                for gid in _parse_group_ids(raw):
+                    if gid not in seen:
+                        seen.add(gid)
+                        result.append(gid)
+    except Exception as e:
+        logger.error("get_all_telegram_groups (TIKTOK) failed: %s", e)
+
+    try:
+        for gid in await get_group_chat_ids():
+            if gid not in seen:
+                seen.add(gid)
+                result.append(gid)
+    except Exception as e:
+        logger.error("get_all_telegram_groups (TikThook Groups) failed: %s", e)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
