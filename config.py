@@ -2,7 +2,6 @@ import os
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 GROUP_CHAT_ID = os.environ.get("GROUP_CHAT_ID", "")
-STORAGE_PATH = os.environ.get("STORAGE_PATH", "storage.json")
 
 POLL_INTERVAL = 60  # seconds between each polling cycle
 

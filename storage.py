@@ -1,45 +1,22 @@
 """
-Persistent JSON storage for subscriber chat IDs and live state tracking.
+Persistent storage via Supabase — survives redeploys.
 
-Schema:
-{
-    "subscribers": [123456789, ...],
-    "live_state": {"username": true/false, ...}
-}
+Tables (created once in Supabase):
+  tikthook_subscribers  (chat_id BIGINT PRIMARY KEY, added_at TIMESTAMPTZ)
+  tikthook_live_state   (username TEXT PRIMARY KEY, is_live BOOLEAN, updated_at TIMESTAMPTZ)
 """
 
-import json
+import logging
 import os
-import asyncio
-from typing import Any
+from supabase import create_client, Client
 
-from config import STORAGE_PATH
+logger = logging.getLogger(__name__)
 
-_lock = asyncio.Lock()
+_SUPABASE_URL = os.environ["SUPABASE_URL"]
+_SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
-_DEFAULT: dict[str, Any] = {
-    "subscribers": [],
-    "live_state": {},
-}
-
-
-def _load_raw() -> dict[str, Any]:
-    if not os.path.exists(STORAGE_PATH):
-        return dict(_DEFAULT)
-    with open(STORAGE_PATH, "r", encoding="utf-8") as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError:
-            data = {}
-    return {**_DEFAULT, **data}
-
-
-def _save_raw(data: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(STORAGE_PATH) or ".", exist_ok=True)
-    tmp = STORAGE_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, STORAGE_PATH)
+def _client() -> Client:
+    return create_client(_SUPABASE_URL, _SUPABASE_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -47,30 +24,50 @@ def _save_raw(data: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 async def get_subscribers() -> list[int]:
-    async with _lock:
-        return list(_load_raw()["subscribers"])
+    try:
+        res = _client().table("tikthook_subscribers").select("chat_id").execute()
+        return [row["chat_id"] for row in res.data]
+    except Exception as e:
+        logger.error("get_subscribers failed: %s", e)
+        return []
 
 
 async def add_subscriber(chat_id: int) -> bool:
-    """Returns True if the subscriber was added, False if already present."""
-    async with _lock:
-        data = _load_raw()
-        if chat_id in data["subscribers"]:
+    """Returns True if added, False if already present."""
+    try:
+        existing = (
+            _client()
+            .table("tikthook_subscribers")
+            .select("chat_id")
+            .eq("chat_id", chat_id)
+            .execute()
+        )
+        if existing.data:
             return False
-        data["subscribers"].append(chat_id)
-        _save_raw(data)
+        _client().table("tikthook_subscribers").insert({"chat_id": chat_id}).execute()
         return True
+    except Exception as e:
+        logger.error("add_subscriber failed: %s", e)
+        return False
 
 
 async def remove_subscriber(chat_id: int) -> bool:
-    """Returns True if the subscriber was removed, False if not found."""
-    async with _lock:
-        data = _load_raw()
-        if chat_id not in data["subscribers"]:
+    """Returns True if removed, False if not found."""
+    try:
+        existing = (
+            _client()
+            .table("tikthook_subscribers")
+            .select("chat_id")
+            .eq("chat_id", chat_id)
+            .execute()
+        )
+        if not existing.data:
             return False
-        data["subscribers"].remove(chat_id)
-        _save_raw(data)
+        _client().table("tikthook_subscribers").delete().eq("chat_id", chat_id).execute()
         return True
+    except Exception as e:
+        logger.error("remove_subscriber failed: %s", e)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -78,17 +75,33 @@ async def remove_subscriber(chat_id: int) -> bool:
 # ---------------------------------------------------------------------------
 
 async def get_live_state() -> dict[str, bool]:
-    async with _lock:
-        return dict(_load_raw()["live_state"])
+    try:
+        res = _client().table("tikthook_live_state").select("username, is_live").execute()
+        return {row["username"]: row["is_live"] for row in res.data}
+    except Exception as e:
+        logger.error("get_live_state failed: %s", e)
+        return {}
 
 
 async def set_live_state(username: str, is_live: bool) -> None:
-    async with _lock:
-        data = _load_raw()
-        data["live_state"][username] = is_live
-        _save_raw(data)
+    try:
+        _client().table("tikthook_live_state").upsert(
+            {"username": username, "is_live": is_live, "updated_at": "now()"}
+        ).execute()
+    except Exception as e:
+        logger.error("set_live_state failed: %s", e)
 
 
 async def get_live_accounts() -> list[str]:
-    state = await get_live_state()
-    return [u for u, v in state.items() if v]
+    try:
+        res = (
+            _client()
+            .table("tikthook_live_state")
+            .select("username")
+            .eq("is_live", True)
+            .execute()
+        )
+        return [row["username"] for row in res.data]
+    except Exception as e:
+        logger.error("get_live_accounts failed: %s", e)
+        return []
