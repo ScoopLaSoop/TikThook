@@ -169,7 +169,7 @@ async def add_telegram_channel(
         if clean_account:
             formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
         else:
-            formula += ', {{TIKTOK_ACCOUNT}}=""'
+            formula += ', {TIKTOK_ACCOUNT}=""'
         formula += ")"
 
         existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
@@ -204,7 +204,7 @@ async def remove_telegram_channel(
         if clean_account:
             formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
         else:
-            formula += ', {{TIKTOK_ACCOUNT}}=""'
+            formula += ', {TIKTOK_ACCOUNT}=""'
         formula += ")"
 
         existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
@@ -265,7 +265,7 @@ async def set_discord_channel(
         if clean_account:
             formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
         else:
-            formula += ', {{TIKTOK_ACCOUNT}}=""'
+            formula += ', {TIKTOK_ACCOUNT}=""'
         formula += ")"
 
         existing = _table("TikThook Channels").all(formula=formula, fields=["GUILD"])
@@ -294,7 +294,7 @@ async def remove_discord_channel(guild_id: int, tiktok_account: str = "") -> boo
         if clean_account:
             formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
         else:
-            formula += ', {{TIKTOK_ACCOUNT}}=""'
+            formula += ', {TIKTOK_ACCOUNT}=""'
         formula += ")"
 
         existing = _table("TikThook Channels").all(formula=formula, fields=["GUILD"])

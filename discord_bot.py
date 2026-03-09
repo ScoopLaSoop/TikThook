@@ -29,17 +29,13 @@ class TikThookBot(commands.Bot):
         intents = discord.Intents.default()
         super().__init__(command_prefix="!", intents=intents)
 
-    async def setup_hook(self) -> None:
-        await self.tree.sync()
-        logger.info("Discord slash commands synced globally.")
-
     async def on_ready(self) -> None:
         logger.info("Discord bot ready — logged in as %s (id=%s)", self.user, self.user.id)
         for guild in self.guilds:
             try:
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
-                logger.info("Commands synced instantly to guild: %s (%s)", guild.name, guild.id)
+                logger.info("Commands synced to guild: %s (%s)", guild.name, guild.id)
             except Exception as e:
                 logger.warning("Failed to sync to guild %s: %s", guild.name, e)
 
