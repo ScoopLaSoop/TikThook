@@ -32,4 +32,6 @@ ACCOUNTS: list[tuple[str, str]] = [
     # Kath
     ("Kath", "Kathklf"),
     ("Kath", "kathelyn.klfoff"),
+    # Iggpvv2katt
+    ("Iggpvv2katt", "iggpvv2katt"),
 ]
