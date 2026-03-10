@@ -57,7 +57,8 @@ async def polling_loop(notify: NotifyCallback) -> None:
             await asyncio.sleep(POLL_INTERVAL)
             continue
 
-        logger.debug("Poll cycle — %d accounts to check", len(accounts))
+        usernames = ", ".join(f"@{u}" for _, u, _ in accounts)
+        logger.info("Poll — %d compte(s) surveillé(s): %s", len(accounts), usernames)
 
         tasks = [
             _run_with_jitter(name, username, live_channel_ids, notify, random.uniform(0, 3))

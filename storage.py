@@ -39,6 +39,16 @@ def _table(name: str):
 # TikTok accounts
 # ---------------------------------------------------------------------------
 
+def _username_from_record(r: dict) -> str:
+    """Extract TikTok username from record; tries COMPTE, Compte, Username."""
+    fields = r.get("fields", {})
+    for key in ("COMPTE", "Compte", "compte", "Username", "username"):
+        val = fields.get(key)
+        if val and str(val).strip():
+            return str(val).strip().lstrip("@")
+    return ""
+
+
 async def get_accounts() -> list[tuple[str, str, list[int]]]:
     """
     Returns list of (display_name, username, live_channel_ids).
@@ -46,18 +56,28 @@ async def get_accounts() -> list[tuple[str, str, list[int]]]:
     'Telegram Live ID Channel' field. Empty list if no Team linked.
     """
     try:
-        records = _table("TikThook").all(
-            fields=["COMPTE", "NOM", 'Telegram "Live" ID Channel (from 👨‍💼 Team 2)']
-        )
+        records = _table("TikThook").all()
         accounts = []
         for r in records:
-            username = r["fields"].get("COMPTE", "").strip()
-            nom = r["fields"].get("NOM", username).strip()
+            username = _username_from_record(r)
             if not username:
+                logger.warning(
+                    "TikThook: record %s ignoré — aucun username (COMPTE/Compte vide)",
+                    r.get("id", "?"),
+                )
                 continue
-            raw_ids = r["fields"].get('Telegram "Live" ID Channel (from 👨‍💼 Team 2)', [])
+            fields = r["fields"]
+            nom = (
+                fields.get("NOM") or fields.get("Nom") or fields.get("nom") or username
+            )
+            nom = str(nom).strip()
+            raw_ids = fields.get('Telegram "Live" ID Channel (from 👨‍💼 Team 2)') or fields.get(
+                'Telegram "Live" ID Channel (from 👨‍💼 Team)'
+            )
+            if not isinstance(raw_ids, list):
+                raw_ids = [raw_ids] if raw_ids else []
             live_channel_ids: list[int] = []
-            for raw in (raw_ids if isinstance(raw_ids, list) else [raw_ids]):
+            for raw in raw_ids:
                 try:
                     if raw:
                         live_channel_ids.append(int(str(raw).strip()))
@@ -66,7 +86,7 @@ async def get_accounts() -> list[tuple[str, str, list[int]]]:
             accounts.append((nom, username, live_channel_ids))
         return accounts
     except Exception as e:
-        logger.error("get_accounts failed: %s", e)
+        logger.exception("get_accounts failed: %s", e)
         return []
 
 
