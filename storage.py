@@ -151,23 +151,38 @@ async def get_telegram_channels(username: str | None = None) -> list[tuple[int, 
     - If username is given: returns global channels + channels specifically for that account.
     - If username is None: returns only global channels.
     """
+    global_ch, per_acc = await get_telegram_channels_split(username)
+    return global_ch + per_acc
+
+
+async def get_telegram_channels_split(
+    username: str | None,
+) -> tuple[list[tuple[int, int | None]], list[tuple[int, int | None]]]:
+    """
+    Returns (global_channels, per_account_channels).
+    - global: TIKTOK_ACCOUNT empty → receive ALL accounts
+    - per_account: TIKTOK_ACCOUNT set → receive ONLY that account
+    """
     try:
         records = _table("TikThook Channels").all(
             formula='{TYPE}="TELEGRAM"',
             fields=["CHAT_ID", "THREAD_ID", "TIKTOK_ACCOUNT"],
         )
-        result = []
+        global_list: list[tuple[int, int | None]] = []
+        per_account_list: list[tuple[int, int | None]] = []
         clean = (username or "").lower().lstrip("@")
         for r in records:
             if "CHAT_ID" not in r["fields"]:
                 continue
             chat_id, thread_id, account = _parse_tg_record(r)
-            if account == "" or (clean and account == clean):
-                result.append((chat_id, thread_id))
-        return result
+            if account == "":
+                global_list.append((chat_id, thread_id))
+            elif clean and account == clean:
+                per_account_list.append((chat_id, thread_id))
+        return global_list, per_account_list
     except Exception as e:
-        logger.error("get_telegram_channels failed: %s", e)
-        return []
+        logger.error("get_telegram_channels_split failed: %s", e)
+        return [], []
 
 
 async def add_telegram_channel(
@@ -248,25 +263,45 @@ async def get_discord_channels(username: str | None = None) -> list[tuple[int, i
     - If username is given: returns global channels + channels for that account.
     - If username is None: returns only global channels.
     """
+    global_ch, per_acc = await get_discord_channels_split(username)
+    return global_ch + per_acc
+
+
+async def get_discord_channels_split(
+    username: str | None,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """
+    Returns (global_channels, per_account_channels).
+    - global: TIKTOK_ACCOUNT empty → receive ALL accounts
+    - per_account: TIKTOK_ACCOUNT set → receive ONLY that account
+    """
     try:
         records = _table("TikThook Channels").all(
             formula='{TYPE}="DISCORD"',
             fields=["GUILD", "CHANNEL", "TIKTOK_ACCOUNT"],
         )
-        result = []
+        global_list: list[tuple[int, int]] = []
+        per_account_list: list[tuple[int, int]] = []
         clean = (username or "").lower().lstrip("@")
         for r in records:
             gid = r["fields"].get("GUILD")
             cid = r["fields"].get("CHANNEL")
             if not gid or not cid:
                 continue
+            try:
+                pair = (int(str(gid)), int(str(cid)))
+            except (ValueError, TypeError):
+                logger.warning("Discord record invalide: GUILD=%s CHANNEL=%s", gid, cid)
+                continue
             account = r["fields"].get("TIKTOK_ACCOUNT", "").strip().lower().lstrip("@")
-            if account == "" or (clean and account == clean):
-                result.append((int(gid), int(cid)))
-        return result
+            if account == "":
+                global_list.append(pair)
+            elif clean and account == clean:
+                per_account_list.append(pair)
+        return global_list, per_account_list
     except Exception as e:
-        logger.error("get_discord_channels failed: %s", e)
-        return []
+        logger.error("get_discord_channels_split failed: %s", e)
+        return [], []
 
 
 async def set_discord_channel(

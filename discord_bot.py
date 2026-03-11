@@ -187,8 +187,17 @@ bot.tree.add_command(group)
 # ---------------------------------------------------------------------------
 
 async def send_discord_notification(display_name: str, username: str, is_live: bool) -> None:
-    channels = await storage.get_discord_channels(username)
+    global_ch, per_acc = await storage.get_discord_channels_split(username)
+    if per_acc:
+        channels = per_acc
+    else:
+        channels = global_ch
+
     if not channels:
+        logger.warning(
+            "Discord: 0 channel configuré pour @%s — exécute /tikthook set dans le channel Allure",
+            username,
+        )
         return
 
     if is_live:
@@ -205,7 +214,12 @@ async def send_discord_notification(display_name: str, username: str, is_live: b
             color=discord.Color.dark_gray(),
         )
 
-    logger.info("📨 Discord — envoi à %d channel(s)...", len(channels))
+    logger.info(
+        "📨 Discord @%s — envoi à %d channel(s) (%s)",
+        username,
+        len(channels),
+        "par compte" if per_acc else "global",
+    )
     for guild_id, channel_id in channels:
         ch = bot.get_channel(channel_id)
         if ch is None:
@@ -217,5 +231,11 @@ async def send_discord_notification(display_name: str, username: str, is_live: b
         try:
             await ch.send(content="@everyone", embed=embed)
             logger.info("  ✅ Discord envoyé → guild=%s channel=%s", guild_id, channel_id)
+        except discord.Forbidden as exc:
+            try:
+                await ch.send(embed=embed)
+                logger.info("  ✅ Discord envoyé (sans @everyone) → guild=%s channel=%s", guild_id, channel_id)
+            except Exception as exc2:
+                logger.warning("  ❌ Discord échec → guild=%s channel=%s: %s", guild_id, channel_id, exc2)
         except Exception as exc:
-            logger.warning("  ❌ Discord échec → channel=%s: %s", channel_id, exc)
+            logger.warning("  ❌ Discord échec → guild=%s channel=%s: %s", guild_id, channel_id, exc)

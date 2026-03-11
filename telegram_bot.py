@@ -306,26 +306,34 @@ async def send_live_notification(
     else:
         text = f"⚫ *{display_name}* (@{username}) a terminé son live."
 
-    seen: set[int] = set()
+    seen: set[tuple[int, int | None]] = set()
     targets: list[tuple[int, int | None]] = []
+
+    def _add(cid: int, tid: int | None) -> None:
+        key = (cid, tid)
+        if key not in seen:
+            seen.add(key)
+            targets.append((cid, tid))
 
     # 1. Telegram channel lié à la modèle (Telegram "Live" ID Channel from Team)
     for chat_id in live_channel_ids:
-        if chat_id not in seen:
-            seen.add(chat_id)
-            targets.append((chat_id, None))
+        _add(chat_id, None)
 
-    # 2. Groupes Telegram globaux + spécifiques à ce compte
-    for chat_id, thread_id in await storage.get_telegram_channels(username):
-        if chat_id not in seen:
-            seen.add(chat_id)
-            targets.append((chat_id, thread_id))
+    # 2. TikThook Channels - global vs per-account
+    global_ch, per_acc = await storage.get_telegram_channels_split(username)
+    if per_acc:
+        # Ce compte a un routage /setlive — envoi UNIQUEMENT aux topics ciblés
+        for chat_id, thread_id in per_acc:
+            _add(chat_id, thread_id)
+    else:
+        # Pas de routage spécifique — envoi aux groupes globaux (/addgroup)
+        for chat_id, thread_id in global_ch:
+            _add(chat_id, thread_id)
 
     # 3. Abonnés individuels (/start)
-    for chat_id in await storage.get_subscribers():
-        if chat_id not in seen:
-            seen.add(chat_id)
-            targets.append((chat_id, None))
+    subscribers = await storage.get_subscribers()
+    for chat_id in subscribers:
+        _add(chat_id, None)
 
     if not targets:
         logger.warning(
@@ -336,7 +344,12 @@ async def send_live_notification(
         )
         return
 
-    logger.info("📨 Envoi Telegram à %d destinataire(s)...", len(targets))
+    n_team = len(live_channel_ids)
+    n_tikthook = len(per_acc) if per_acc else len(global_ch)
+    logger.info(
+        "📨 Envoi Telegram @%s → %d dest. (Team=%d, TikThook=%d, abonnés=%d)",
+        username, len(targets), n_team, n_tikthook, len(subscribers),
+    )
     for chat_id, thread_id in targets:
         try:
             kwargs: dict = {
