@@ -145,8 +145,8 @@ async def cmd_setlive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     topic_info = f" (topic <code>{thread_id}</code>)" if thread_id else ""
     if added:
         await update.message.reply_text(
-            f"✅ Ce topic{topic_info} recevra les notifs uniquement pour "
-            f"<b>@{username}</b> !\n"
+            f"✅ Ce topic{topic_info} recevra les notifs uniquement pour <b>@{username}</b> "
+            f"(retiré des autres topics).\n"
             f"Utilise <code>/removelive {username}</code> pour désactiver.",
             parse_mode=ParseMode.HTML,
         )
@@ -256,8 +256,8 @@ async def send_live_notification(
 
 BOT_COMMANDS = [
     BotCommand("status",      "Voir les comptes actuellement en live"),
-    BotCommand("setlive",     "Notifs d'un compte spécifique ici (admin)"),
-    BotCommand("removelive",  "Supprimer routage par compte (admin)"),
+    BotCommand("setlive",     "Ce topic reçoit les notifs uniquement pour ce compte (admin)"),
+    BotCommand("removelive",  "Supprimer le routage de ce compte sur ce topic (admin)"),
     BotCommand("id",          "Afficher l'ID de ce chat et du topic"),
     BotCommand("help",        "Aide et bonnes pratiques"),
 ]

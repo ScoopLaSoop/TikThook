@@ -58,7 +58,7 @@ bot = TikThookBot()
 group = app_commands.Group(name="tikthook", description="Gestion des notifications TikTok Live")
 
 
-@group.command(name="set", description="Ce channel reçoit les notifs de TOUS les comptes TikTok")
+@group.command(name="set", description="Ce channel reçoit les notifs de tous les comptes (sauf set live ailleurs)")
 @app_commands.checks.has_permissions(manage_channels=True)
 async def cmd_set(interaction: discord.Interaction) -> None:
     guild = interaction.guild
@@ -66,9 +66,8 @@ async def cmd_set(interaction: discord.Interaction) -> None:
     ok = await storage.set_discord_channel(guild.id, channel.id, guild.name)
     if ok:
         await interaction.response.send_message(
-            f"✅ **#{channel.name}** recevra les notifications de **tous** les comptes TikTok Live !\n"
-            f"Pour cibler un seul compte : `/tikthook setlive username`\n"
-            f"Pour désactiver : `/tikthook remove`",
+            f"✅ **#{channel.name}** recevra les notifs de tous les comptes *sans* set live ailleurs.\n"
+            f"Pour un seul compte : `/tikthook setlive username` — Pour désactiver : `/tikthook remove`",
         )
         logger.info("Discord global channel set: guild=%s channel=%s", guild.name, channel.id)
     else:
@@ -89,7 +88,7 @@ async def cmd_remove(interaction: discord.Interaction) -> None:
         )
 
 
-@group.command(name="setlive", description="Ce channel reçoit les notifs d'UN seul compte TikTok")
+@group.command(name="setlive", description="Ce channel reçoit les notifs d'un seul compte (retire des autres)")
 @app_commands.describe(username="Nom du compte TikTok (sans @)")
 @app_commands.checks.has_permissions(manage_channels=True)
 async def cmd_setlive(interaction: discord.Interaction, username: str) -> None:
@@ -99,7 +98,7 @@ async def cmd_setlive(interaction: discord.Interaction, username: str) -> None:
     ok = await storage.set_discord_channel(guild.id, channel.id, guild.name, tiktok_account=clean)
     if ok:
         await interaction.response.send_message(
-            f"✅ **#{channel.name}** recevra les notifs uniquement pour **@{clean}** !\n"
+            f"✅ **#{channel.name}** recevra les notifs uniquement pour **@{clean}** (retiré des autres channels).\n"
             f"Pour supprimer : `/tikthook removelive {clean}`",
         )
         logger.info("Discord per-account channel set: guild=%s account=@%s channel=%s", guild.name, clean, channel.id)
@@ -107,7 +106,7 @@ async def cmd_setlive(interaction: discord.Interaction, username: str) -> None:
         await interaction.response.send_message("❌ Erreur. Réessaie.", ephemeral=True)
 
 
-@group.command(name="removelive", description="Supprimer le routage par compte pour ce serveur")
+@group.command(name="removelive", description="Supprimer le routage set live de ce compte")
 @app_commands.describe(username="Nom du compte TikTok (sans @)")
 @app_commands.checks.has_permissions(manage_channels=True)
 async def cmd_removelive(interaction: discord.Interaction, username: str) -> None:
