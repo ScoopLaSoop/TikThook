@@ -2,15 +2,13 @@
 Telegram bot handlers and notification sender.
 
 Commands:
-    /start       — subscribe to live notifications
-    /stop        — unsubscribe
     /status      — list accounts currently live
     /id          — get current chat ID and thread ID
-    /addgroup    — register this group/topic for ALL accounts (admin only)
-    /removegroup — unregister this group/topic (admin only)
     /setlive     — register this topic for a SPECIFIC account (admin only)
     /removelive  — unregister per-account routing (admin only)
     /help        — show all commands and best practices
+
+Telegram = uniquement /setlive. Pas d'abonnés, pas de Team.
 """
 
 import logging
@@ -28,35 +26,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    added = await storage.add_subscriber(chat_id)
-    if added:
-        await update.message.reply_text(
-            "Tu es maintenant abonné(e) aux notifications TikTok Live ! 🔔\n"
-            "Tu recevras un message dès qu'un compte surveillé passe en live.\n\n"
-            "Utilise /stop pour te désabonner."
-        )
-    else:
-        await update.message.reply_text(
-            "Tu es déjà abonné(e). Utilise /stop pour te désabonner."
-        )
-
-
-async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    removed = await storage.remove_subscriber(chat_id)
-    if removed:
-        await update.message.reply_text(
-            "Tu es désabonné(e). Tu ne recevras plus de notifications.\n"
-            "Utilise /start pour te réabonner."
-        )
-    else:
-        await update.message.reply_text(
-            "Tu n'étais pas abonné(e). Utilise /start pour t'abonner."
-        )
-
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     live_accounts = await storage.get_live_accounts()
@@ -86,9 +55,7 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if chat.type != "private":
         lines.append(
-            "\n➡️ Utilise `/addgroup` directement ici pour enregistrer ce "
-            + ("topic" if thread_id else "groupe")
-            + " automatiquement."
+            "\n➡️ Utilise `/setlive username` dans ce topic pour recevoir les notifs d'un compte."
         )
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
@@ -101,40 +68,28 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 HELP_TEXT = (
     "🤖 <b>TikThook — Notifications TikTok Live</b>\n"
     "\n"
-    "👤 <b>En privé (abonnement personnel)</b>\n"
-    "• /start — Recevoir les notifs dans ce chat\n"
-    "• /stop — Arrêter de recevoir les notifs\n"
-    "• /status — Voir qui est en live en ce moment\n"
-    "\n"
-    "👥 <b>Dans un groupe — tous les comptes (admin)</b>\n"
-    "• /addgroup — Ce topic/groupe reçoit les notifs de <b>tous</b> les comptes\n"
-    "• /removegroup — Désactiver\n"
-    "\n"
-    "🎯 <b>Dans un groupe — par compte spécifique (admin)</b>\n"
+    "🎯 <b>Telegram — uniquement /setlive</b>\n"
     "• /setlive <code>username</code> — Ce topic reçoit les notifs uniquement pour ce compte\n"
     "  <i>ex : /setlive roxane_mn</i>\n"
     "• /removelive <code>username</code> — Supprimer ce routage\n"
     "\n"
     "🔧 <b>Utilitaire</b>\n"
+    "• /status — Voir qui est en live en ce moment\n"
     "• /id — Afficher l'ID de ce chat et du topic\n"
     "• /help — Afficher ce message\n"
     "\n"
     "━━━━━━━━━━━━━━━━━━━━━━━\n"
-    "📋 <b>Bonnes pratiques Telegram</b>\n"
+    "📋 <b>Bonnes pratiques</b>\n"
     "\n"
     "✅ Ajoute le bot comme <b>administrateur</b> avant toute commande\n"
-    "✅ Groupe avec topics (forum) ? Tape la commande <b>dans le bon topic</b> — ciblage automatique\n"
-    "✅ /addgroup = toutes les notifs | /setlive username = une seule modèle\n"
-    "✅ Tu peux combiner les deux : un topic global + des topics par modèle\n"
+    "✅ Chaque compte = un seul topic. /setlive retire le compte des autres topics.\n"
+    "✅ Tape <code>/setlive username</code> dans le topic cible\n"
     "\n"
     "━━━━━━━━━━━━━━━━━━━━━━━\n"
-    "🎮 <b>Bonnes pratiques Discord</b>\n"
+    "🎮 <b>Discord</b>\n"
     "\n"
-    "✅ Invite le bot avec les permissions <b>Envoyer des messages</b> et <b>Lire les messages</b>\n"
-    "✅ <code>/tikthook set</code> → toutes les notifs dans ce channel\n"
-    "✅ <code>/tikthook setlive username</code> → notifs d'un seul compte dans ce channel\n"
-    "✅ <code>/tikthook remove</code> / <code>/tikthook removelive username</code> pour désactiver\n"
-    "✅ Nécessite la permission <b>Gérer les channels</b>"
+    "✅ <code>/tikthook set</code> → toutes les notifs (sauf comptes set live ailleurs)\n"
+    "✅ <code>/tikthook setlive username</code> → notifs d'un seul compte\n"
 )
 
 
@@ -156,58 +111,6 @@ async def _is_admin(update: Update, context) -> bool:
         return member.status in ("administrator", "creator")
     except Exception:
         return False
-
-
-async def cmd_addgroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _is_admin(update, context):
-        await update.message.reply_text("❌ Seuls les admins peuvent enregistrer ce groupe.")
-        return
-
-    chat = update.effective_chat
-    msg = update.message
-    thread_id = msg.message_thread_id if msg else None
-
-    if chat.type == "private":
-        await update.message.reply_text(
-            "Cette commande doit être utilisée dans un groupe, pas en privé."
-        )
-        return
-
-    description = chat.title or ""
-    added = await storage.add_telegram_channel(chat.id, thread_id, description)
-
-    if added:
-        topic_info = f" (topic `{thread_id}`)" if thread_id else ""
-        await update.message.reply_text(
-            f"✅ Ce groupe{topic_info} recevra désormais les notifications TikTok Live !\n"
-            f"Utilise /removegroup pour désactiver.",
-            parse_mode=ParseMode.MARKDOWN,
-        )
-    else:
-        await update.message.reply_text(
-            "Ce groupe est déjà enregistré. Utilise /removegroup pour le retirer."
-        )
-
-
-async def cmd_removegroup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _is_admin(update, context):
-        await update.message.reply_text("❌ Seuls les admins peuvent retirer ce groupe.")
-        return
-
-    chat = update.effective_chat
-    msg = update.message
-    thread_id = msg.message_thread_id if msg else None
-
-    removed = await storage.remove_telegram_channel(chat.id, thread_id)
-
-    if removed:
-        await update.message.reply_text(
-            "⚫ Ce groupe ne recevra plus les notifications TikTok Live."
-        )
-    else:
-        await update.message.reply_text(
-            "Ce groupe n'était pas enregistré. Utilise /addgroup pour l'ajouter."
-        )
 
 
 async def cmd_setlive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,45 +218,22 @@ async def send_live_notification(
             seen.add(key)
             targets.append((cid, tid))
 
-    # 2. TikThook Channels - global vs per-account (vérifié en premier pour décider Team)
-    global_ch, per_acc = await storage.get_telegram_channels_split(username)
-    if per_acc:
-        # Ce compte a /setlive — envoi UNIQUEMENT aux topics ciblés (ignore Team et global)
-        for chat_id, thread_id in per_acc:
-            _add(chat_id, thread_id)
-    else:
-        # Pas de /setlive — envoi aux channels globaux (/addgroup) = TOUS les topics
-        if global_ch:
-            logger.warning(
-                "⚠️ @%s n'a pas de /setlive → envoi à %d channel(s) GLOBAL(ux). "
-                "Pour limiter à un seul topic : /setlive %s dans le topic cible.",
-                username, len(global_ch), username,
-            )
-        for chat_id, thread_id in global_ch:
-            _add(chat_id, thread_id)
-        # Team (Telegram "Live" ID Channel from Airtable) — seulement si pas de /setlive
-        for chat_id in live_channel_ids:
-            _add(chat_id, None)
-
-    # 3. Abonnés individuels (/start)
-    subscribers = await storage.get_subscribers()
-    for chat_id in subscribers:
-        _add(chat_id, None)
+    # Telegram = uniquement /setlive (pas de Team, pas d'abonnés)
+    _, per_acc = await storage.get_telegram_channels_split(username)
+    for chat_id, thread_id in per_acc:
+        _add(chat_id, thread_id)
 
     if not targets:
         logger.warning(
             "⚠️  Notification @%s ignorée : 0 destinataires. "
-            "Lie un membre Team au compte TikThook, ajoute un groupe dans "
-            "'TikThook Channels' (TYPE=TELEGRAM), ou fais /start.",
-            username,
+            "Fais /setlive %s dans un topic Telegram.",
+            username, username,
         )
         return
 
-    n_team = len(live_channel_ids)
-    n_tikthook = len(per_acc) if per_acc else len(global_ch)
     logger.info(
-        "📨 Envoi Telegram @%s → %d dest. (Team=%d, TikThook=%d, abonnés=%d)",
-        username, len(targets), n_team, n_tikthook, len(subscribers),
+        "📨 Envoi Telegram @%s → %d dest. (setlive)",
+        username, len(targets),
     )
     for chat_id, thread_id in targets:
         try:
@@ -375,11 +255,7 @@ async def send_live_notification(
 # ---------------------------------------------------------------------------
 
 BOT_COMMANDS = [
-    BotCommand("start",       "S'abonner aux notifications TikTok Live"),
-    BotCommand("stop",        "Se désabonner des notifications"),
     BotCommand("status",      "Voir les comptes actuellement en live"),
-    BotCommand("addgroup",    "Notifs de tous les comptes ici (admin)"),
-    BotCommand("removegroup", "Désactiver les notifs globales (admin)"),
     BotCommand("setlive",     "Notifs d'un compte spécifique ici (admin)"),
     BotCommand("removelive",  "Supprimer routage par compte (admin)"),
     BotCommand("id",          "Afficher l'ID de ce chat et du topic"),
@@ -394,12 +270,8 @@ def build_application() -> Application:
         .post_init(_register_commands)
         .build()
     )
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("id", cmd_id))
-    app.add_handler(CommandHandler("addgroup", cmd_addgroup))
-    app.add_handler(CommandHandler("removegroup", cmd_removegroup))
     app.add_handler(CommandHandler("setlive", cmd_setlive))
     app.add_handler(CommandHandler("removelive", cmd_removelive))
     app.add_handler(CommandHandler("help", cmd_help))

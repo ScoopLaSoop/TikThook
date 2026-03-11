@@ -138,28 +138,22 @@ async def cmd_status(interaction: discord.Interaction) -> None:
 DISCORD_HELP_TEXT = (
     "🤖 **TikThook — Notifications TikTok Live**\n"
     "\n"
-    "📡 **Toutes les notifications → ce channel**\n"
-    "• `/tikthook set` — Ce channel reçoit les notifs de **tous** les comptes\n"
+    "📡 **Toutes les notifications → ce channel (global)**\n"
+    "• `/tikthook set` — Ce channel reçoit les notifs de tous les comptes *sans* set live ailleurs\n"
     "• `/tikthook remove` — Désactiver les notifs globales\n"
     "\n"
-    "🎯 **Notifications → un seul compte**\n"
+    "🎯 **Notifications → un seul compte (set live)**\n"
     "• `/tikthook setlive username` — Ce channel reçoit uniquement les notifs de ce compte\n"
     "  *ex : /tikthook setlive roxane_mn*\n"
     "• `/tikthook removelive username` — Supprimer ce routage\n"
-    "  *ex : /tikthook removelive roxane_mn*\n"
     "\n"
     "🔧 **Utilitaire**\n"
     "• `/tikthook status` — Voir les comptes actuellement en live\n"
     "• `/tikthook help` — Afficher ce message\n"
     "\n"
     "━━━━━━━━━━━━━━━━━━━━━━━\n"
-    "✅ **Bonnes pratiques Discord**\n"
-    "\n"
-    "• Invite le bot avec les permissions **Envoyer des messages** et **Lire les messages**\n"
-    "• Les commandes `/set`, `/remove`, `/setlive`, `/removelive` nécessitent la permission **Gérer les channels**\n"
-    "• Tu peux avoir un channel global **et** des channels par compte en même temps\n"
-    "• Pour plusieurs comptes dans le même channel : fais `/tikthook setlive` une fois par compte\n"
-    "• `/tikthook set` et `/tikthook setlive` peuvent pointer vers des channels différents"
+    "✅ **Priorité** : Un compte set live (Telegram ou Discord) n'apparaît jamais en global.\n"
+    "• Set live retire le compte de partout avant de l'assigner à ce channel."
 )
 
 
@@ -191,7 +185,11 @@ async def send_discord_notification(display_name: str, username: str, is_live: b
     if per_acc:
         channels = per_acc
     else:
-        channels = global_ch
+        # Règle 3: set global exclut les comptes déjà set live ailleurs (Telegram ou Discord)
+        if await storage.account_has_setlive_anywhere(username):
+            channels = []
+        else:
+            channels = global_ch
 
     if not channels:
         logger.warning(

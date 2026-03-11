@@ -2,21 +2,23 @@
 Persistent storage via Airtable (base: ALLURE AGENCY).
 
 Tables used:
-  TikThook PUSH LIVE 🟢 — COMPTE (username), NOM (display name),
-                         👨‍💼 Team (link → Team table),
-                         Telegram "Live" ID Channel (lookup from Team)
+  TikThook PUSH LIVE 🟢 — COMPTE (username), NOM (display name)
+                         (Team / Telegram Live ID retiré — Telegram = uniquement /setlive)
   TikThook Channels    — TYPE (TELEGRAM | DISCORD),
                          TIKTOK_ACCOUNT (username, empty = global)
                            TELEGRAM: CHAT_ID (number), THREAD_ID (number, optional)
                            DISCORD:  GUILD (text), CHANNEL (text), GUILD_NAME (text)
   TikThook Subscribers — CHAT_ID (number)  [auto-managed via /start /stop]
 
-Routing logic:
-  - If TIKTOK_ACCOUNT is set → notification only sent for that specific account
-  - If TIKTOK_ACCOUNT is empty → notification sent for ALL accounts (global)
+Routing logic (priorité absolue setlive > global):
+  - Un compte set live = UN SEUL thread/channel (Telegram ou Discord)
+  - Set live dans un thread → retirer ce compte de TOUS les autres (threads, globaux)
+  - Telegram : uniquement /setlive (pas de global)
+  - Discord : set global exclut les comptes déjà set live ailleurs
 
 Note: Discord IDs stored as text (GUILD/CHANNEL) to avoid JS float precision loss.
 """
+from __future__ import annotations
 
 import logging
 import os
@@ -52,8 +54,7 @@ def _username_from_record(r: dict) -> str:
 async def get_accounts() -> list[tuple[str, str, list[int]]]:
     """
     Returns list of (display_name, username, live_channel_ids).
-    live_channel_ids: Telegram channel IDs from the linked Team member's
-    'Telegram Live ID Channel' field. Empty list if no Team linked.
+    live_channel_ids: toujours [] — Team retiré, Telegram = uniquement /setlive.
     """
     try:
         records = _table("TikThook PUSH LIVE 🟢").all()
@@ -71,19 +72,7 @@ async def get_accounts() -> list[tuple[str, str, list[int]]]:
                 fields.get("NOM") or fields.get("Nom") or fields.get("nom") or username
             )
             nom = str(nom).strip()
-            raw_ids = fields.get('Telegram "Live" ID Channel (from 👨‍💼 Team 2)') or fields.get(
-                'Telegram "Live" ID Channel (from 👨‍💼 Team)'
-            )
-            if not isinstance(raw_ids, list):
-                raw_ids = [raw_ids] if raw_ids else []
-            live_channel_ids: list[int] = []
-            for raw in raw_ids:
-                try:
-                    if raw:
-                        live_channel_ids.append(int(str(raw).strip()))
-                except (ValueError, TypeError):
-                    pass
-            accounts.append((nom, username, live_channel_ids))
+            accounts.append((nom, username, []))
         return accounts
     except Exception as e:
         logger.exception("get_accounts failed: %s", e)
@@ -185,6 +174,40 @@ async def get_telegram_channels_split(
         return [], []
 
 
+async def remove_account_from_all_channels(username: str) -> int:
+    """
+    Remove this account from ALL TikThook Channels (Telegram + Discord).
+    Used when setting live: one account = one destination only.
+    Returns number of records deleted.
+    """
+    try:
+        clean = username.strip().lower().lstrip("@")
+        if not clean:
+            return 0
+        formula = f'AND({{TIKTOK_ACCOUNT}}="{clean}", OR({{TYPE}}="TELEGRAM", {{TYPE}}="DISCORD"))'
+        records = _table("TikThook Channels").all(formula=formula, fields=["id"])
+        for r in records:
+            _table("TikThook Channels").delete(r["id"])
+        return len(records)
+    except Exception as e:
+        logger.error("remove_account_from_all_channels failed: %s", e)
+        return 0
+
+
+async def account_has_setlive_anywhere(username: str) -> bool:
+    """True if this account has per-account routing in Telegram or Discord."""
+    try:
+        clean = (username or "").strip().lower().lstrip("@")
+        if not clean:
+            return False
+        formula = f'AND({{TIKTOK_ACCOUNT}}="{clean}", OR({{TYPE}}="TELEGRAM", {{TYPE}}="DISCORD"))'
+        records = _table("TikThook Channels").all(formula=formula, fields=["id"], max_records=1)
+        return len(records) > 0
+    except Exception as e:
+        logger.error("account_has_setlive_anywhere failed: %s", e)
+        return False
+
+
 async def add_telegram_channel(
     chat_id: int,
     thread_id: int | None,
@@ -192,32 +215,37 @@ async def add_telegram_channel(
     tiktok_account: str = "",
 ) -> bool:
     """
-    Register a Telegram group/topic.
-    If tiktok_account is set, only notifies for that specific account.
-    Returns True if added, False if already present.
+    Register a Telegram group/topic for ONE specific account (setlive only).
+    Règle 1: Retire ce compte de TOUS les autres threads et globaux avant d'ajouter.
+    Returns True if added, False if already present for this exact (chat, thread, account).
     """
     try:
         clean_account = tiktok_account.strip().lower().lstrip("@")
+        if not clean_account:
+            logger.warning("add_telegram_channel: tiktok_account required (no global on Telegram)")
+            return False
+
+        # Règle 1: retirer ce compte de partout (Telegram + Discord)
+        removed = await remove_account_from_all_channels(clean_account)
+        if removed:
+            logger.info("Removed @%s from %d other channel(s) before setlive", clean_account, removed)
+
         formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}'
-        if thread_id:
+        if thread_id is not None:
             formula += f", {{THREAD_ID}}={thread_id}"
-        if clean_account:
-            formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
         else:
-            formula += ', {TIKTOK_ACCOUNT}=""'
-        formula += ")"
+            formula += ", OR({THREAD_ID}=BLANK(), {THREAD_ID}=\"\")"
+        formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}")'
 
         existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
         if existing:
             return False
 
-        data: dict = {"TYPE": "TELEGRAM", "CHAT_ID": chat_id}
-        if thread_id:
+        data: dict = {"TYPE": "TELEGRAM", "CHAT_ID": chat_id, "TIKTOK_ACCOUNT": clean_account}
+        if thread_id is not None:
             data["THREAD_ID"] = thread_id
         if description:
             data["DESCRIPTION"] = description
-        if clean_account:
-            data["TIKTOK_ACCOUNT"] = clean_account
         _table("TikThook Channels").create(data)
         return True
     except Exception as e:
@@ -230,17 +258,17 @@ async def remove_telegram_channel(
     thread_id: int | None,
     tiktok_account: str = "",
 ) -> bool:
-    """Remove a Telegram group/topic entry."""
+    """Remove a Telegram group/topic entry (setlive only — tiktok_account required)."""
     try:
         clean_account = tiktok_account.strip().lower().lstrip("@")
+        if not clean_account:
+            return False
         formula = f'AND({{TYPE}}="TELEGRAM", {{CHAT_ID}}={chat_id}'
-        if thread_id:
+        if thread_id is not None:
             formula += f", {{THREAD_ID}}={thread_id}"
-        if clean_account:
-            formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
         else:
-            formula += ', {TIKTOK_ACCOUNT}=""'
-        formula += ")"
+            formula += ", OR({THREAD_ID}=BLANK(), {THREAD_ID}=\"\")"
+        formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}")'
 
         existing = _table("TikThook Channels").all(formula=formula, fields=["CHAT_ID"])
         if not existing:
@@ -312,10 +340,18 @@ async def set_discord_channel(
 ) -> bool:
     """
     Upsert a Discord channel entry.
-    If tiktok_account is set, only notifies for that specific account.
+    - Global (tiktok_account empty): receives accounts without setlive elsewhere.
+    - Setlive (tiktok_account set): Règle 1+3 — retire ce compte de partout avant d'ajouter.
     """
     try:
         clean_account = tiktok_account.strip().lower().lstrip("@")
+
+        if clean_account:
+            # Règle 1: retirer ce compte de tous les channels (Telegram + Discord)
+            removed = await remove_account_from_all_channels(clean_account)
+            if removed:
+                logger.info("Removed @%s from %d other channel(s) before Discord setlive", clean_account, removed)
+
         formula = f'AND({{TYPE}}="DISCORD", {{GUILD}}="{guild_id}"'
         if clean_account:
             formula += f', {{TIKTOK_ACCOUNT}}="{clean_account}"'
@@ -380,3 +416,35 @@ async def set_live_state(username: str, is_live: bool) -> None:
 
 async def get_live_accounts() -> list[str]:
     return [u for u, v in _live_state.items() if v]
+
+
+# ---------------------------------------------------------------------------
+# Airtable cleanup (channels, threads, assignations)
+# ---------------------------------------------------------------------------
+
+async def clear_all_channels() -> int:
+    """Delete all records from TikThook Channels. Returns count deleted."""
+    try:
+        records = _table("TikThook Channels").all(fields=["TYPE"])
+        for r in records:
+            _table("TikThook Channels").delete(r["id"])
+        n = len(records)
+        logger.info("Cleared TikThook Channels: %d record(s) deleted", n)
+        return n
+    except Exception as e:
+        logger.error("clear_all_channels failed: %s", e)
+        return 0
+
+
+async def clear_all_subscribers() -> int:
+    """Delete all records from TikThook Subscribers. Returns count deleted."""
+    try:
+        records = _table("TikThook Subscribers").all(fields=["CHAT_ID"])
+        for r in records:
+            _table("TikThook Subscribers").delete(r["id"])
+        n = len(records)
+        logger.info("Cleared TikThook Subscribers: %d record(s) deleted", n)
+        return n
+    except Exception as e:
+        logger.error("clear_all_subscribers failed: %s", e)
+        return 0
