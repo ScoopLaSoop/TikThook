@@ -2,7 +2,7 @@
 Persistent storage via Airtable (base: ALLURE AGENCY).
 
 Tables used:
-  TikThook PUSH LIVE   — COMPTE (username), NOM (display name),
+  TikThook PUSH LIVE 🟢 — COMPTE (username), NOM (display name),
                          👨‍💼 Team (link → Team table),
                          Telegram "Live" ID Channel (lookup from Team)
   TikThook Channels    — TYPE (TELEGRAM | DISCORD),
@@ -56,13 +56,13 @@ async def get_accounts() -> list[tuple[str, str, list[int]]]:
     'Telegram Live ID Channel' field. Empty list if no Team linked.
     """
     try:
-        records = _table("TikThook PUSH LIVE").all()
+        records = _table("TikThook PUSH LIVE 🟢").all()
         accounts = []
         for r in records:
             username = _username_from_record(r)
             if not username:
                 logger.warning(
-                    "TikThook PUSH LIVE: record %s ignoré — aucun username (COMPTE/Compte vide)",
+                    "TikThook PUSH LIVE 🟢: record %s ignoré — aucun username (COMPTE/Compte vide)",
                     r.get("id", "?"),
                 )
                 continue
