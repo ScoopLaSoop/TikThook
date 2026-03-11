@@ -315,20 +315,25 @@ async def send_live_notification(
             seen.add(key)
             targets.append((cid, tid))
 
-    # 1. Telegram channel lié à la modèle (Telegram "Live" ID Channel from Team)
-    for chat_id in live_channel_ids:
-        _add(chat_id, None)
-
-    # 2. TikThook Channels - global vs per-account
+    # 2. TikThook Channels - global vs per-account (vérifié en premier pour décider Team)
     global_ch, per_acc = await storage.get_telegram_channels_split(username)
     if per_acc:
-        # Ce compte a un routage /setlive — envoi UNIQUEMENT aux topics ciblés
+        # Ce compte a /setlive — envoi UNIQUEMENT aux topics ciblés (ignore Team et global)
         for chat_id, thread_id in per_acc:
             _add(chat_id, thread_id)
     else:
-        # Pas de routage spécifique — envoi aux groupes globaux (/addgroup)
+        # Pas de /setlive — envoi aux channels globaux (/addgroup) = TOUS les topics
+        if global_ch:
+            logger.warning(
+                "⚠️ @%s n'a pas de /setlive → envoi à %d channel(s) GLOBAL(ux). "
+                "Pour limiter à un seul topic : /setlive %s dans le topic cible.",
+                username, len(global_ch), username,
+            )
         for chat_id, thread_id in global_ch:
             _add(chat_id, thread_id)
+        # Team (Telegram "Live" ID Channel from Airtable) — seulement si pas de /setlive
+        for chat_id in live_channel_ids:
+            _add(chat_id, None)
 
     # 3. Abonnés individuels (/start)
     subscribers = await storage.get_subscribers()
