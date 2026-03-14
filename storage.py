@@ -54,10 +54,36 @@ def _username_from_record(r: dict) -> str:
 async def get_accounts() -> list[tuple[str, str, list[int]]]:
     """
     Returns list of (display_name, username, live_channel_ids).
+    display_name: Prénom du team member lié (👨‍💼 Team 2), sinon NOM, sinon username.
     live_channel_ids: toujours [] — Team retiré, Telegram = uniquement /setlive.
     """
     try:
         records = _table("TikThook PUSH LIVE 🟢").all()
+
+        # Collect all unique Team 2 record IDs to resolve in batch
+        team_record_ids: list[str] = []
+        for r in records:
+            linked = r.get("fields", {}).get("👨\u200d💼 Team 2") or []
+            if linked and isinstance(linked, list):
+                for rid in linked:
+                    if rid and rid not in team_record_ids:
+                        team_record_ids.append(rid)
+
+        # Fetch Team member names (Prénom) in batch
+        team_prenoms: dict[str, str] = {}
+        if team_record_ids:
+            try:
+                formula = "OR(" + ",".join(f'RECORD_ID()="{rid}"' for rid in team_record_ids) + ")"
+                team_records = _table("👨\u200d💼 Team").all(
+                    formula=formula, fields=["Prénom"]
+                )
+                for tr in team_records:
+                    prenom = tr.get("fields", {}).get("Prénom", "").strip()
+                    if prenom:
+                        team_prenoms[tr["id"]] = prenom
+            except Exception as e:
+                logger.warning("get_accounts: impossible de résoudre les team members: %s", e)
+
         accounts = []
         for r in records:
             username = _username_from_record(r)
@@ -68,9 +94,19 @@ async def get_accounts() -> list[tuple[str, str, list[int]]]:
                 )
                 continue
             fields = r["fields"]
-            nom = (
-                fields.get("NOM") or fields.get("Nom") or fields.get("nom") or username
-            )
+
+            # Priorité: Prénom du team member lié > NOM > username
+            nom = None
+            linked = fields.get("👨\u200d💼 Team 2") or []
+            if linked and isinstance(linked, list):
+                for rid in linked:
+                    if rid in team_prenoms:
+                        nom = team_prenoms[rid]
+                        break
+
+            if not nom:
+                nom = fields.get("NOM") or fields.get("Nom") or fields.get("nom") or username
+
             nom = str(nom).strip()
             accounts.append((nom, username, []))
         return accounts
